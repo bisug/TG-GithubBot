@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github-webhook/internal/bot/ui"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
@@ -99,7 +100,12 @@ func (h *CommandHandler) replyWithConnectButton(b *gotgbot.Bot, ctx *ext.Context
 	_, err := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{{Text: "Connect GitHub", Url: url}},
+				{
+					ui.URL("Connect GitHub", url,
+						ui.WithStyle(ui.StylePrimary),
+						ui.WithCustomEmojiEnv(ui.IconConnect),
+					),
+				},
 			},
 		},
 	})
@@ -138,7 +144,10 @@ func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboa
 	var navRow []gotgbot.InlineKeyboardButton
 
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "<", CallbackData: addRepoPageCallback(resp.PrevPage)})
+		navRow = append(navRow, ui.Callback("<", addRepoPageCallback(resp.PrevPage),
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconPrevious),
+		))
 	}
 
 	startPage := page - 1
@@ -159,11 +168,14 @@ func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboa
 		if i == page {
 			text = "· " + text + " ·"
 		}
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: addRepoPageCallback(i)})
+		navRow = append(navRow, ui.Callback(text, addRepoPageCallback(i), ui.WithStyle(ui.StylePrimary)))
 	}
 
 	if resp.NextPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: ">", CallbackData: addRepoPageCallback(resp.NextPage)})
+		navRow = append(navRow, ui.Callback(">", addRepoPageCallback(resp.NextPage),
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconNext),
+		))
 	}
 
 	return navRow
@@ -325,7 +337,10 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: compactButtonText(repo.GetFullName()), CallbackData: addRepoIDCallback(repo.GetID())},
+			ui.Callback(compactButtonText(repo.GetFullName()), addRepoIDCallback(repo.GetID()),
+				ui.WithStyle(ui.StylePrimary),
+				ui.WithCustomEmojiEnv(ui.IconAdd),
+			),
 		})
 	}
 
@@ -358,7 +373,10 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: compactButtonText(l.RepoFullName), CallbackData: repoSettingsCallback(l)},
+			ui.Callback(compactButtonText(l.RepoFullName), repoSettingsCallback(l),
+				ui.WithStyle(ui.StylePrimary),
+				ui.WithCustomEmojiEnv(ui.IconSettings),
+			),
 		})
 	}
 

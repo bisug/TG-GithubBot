@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github-webhook/internal/bot/ui"
+
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/strikethrough"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
@@ -144,7 +146,12 @@ func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *go
 	}
 	return message, &gotgbot.InlineKeyboardMarkup{
 		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{{Text: buttonText, Url: buttonURL}},
+			{
+				ui.URL(buttonText, buttonURL,
+					ui.WithStyle(ui.StylePrimary),
+					ui.WithCustomEmojiEnv(ui.IconGitHub),
+				),
+			},
 		},
 	}
 }

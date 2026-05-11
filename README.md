@@ -218,6 +218,30 @@ Important:
 - `TELEGRAM_WEBHOOK_URL` must be reachable by GitHub over HTTPS.
 - Do not commit `.env`.
 
+### Optional Button Custom Emoji
+
+Telegram Bot API 9.4 supports custom emoji icons and visual button styles. Button styles are enabled automatically by the bot. Custom emoji icons are optional and can be configured with Telegram custom emoji IDs.
+
+If these variables are not set, the bot still works and uses styled text buttons without custom emoji icons.
+
+```dotenv
+TG_BUTTON_ICON_ADD=
+TG_BUTTON_ICON_ALL=
+TG_BUTTON_ICON_BACK=
+TG_BUTTON_ICON_CANCEL=
+TG_BUTTON_ICON_CHOOSE=
+TG_BUTTON_ICON_CONFIRM=
+TG_BUTTON_ICON_CONNECT=
+TG_BUTTON_ICON_GITHUB=
+TG_BUTTON_ICON_NEXT=
+TG_BUTTON_ICON_PREVIOUS=
+TG_BUTTON_ICON_PUSH=
+TG_BUTTON_ICON_SETTINGS=
+TG_BUTTON_ICON_STOP=
+```
+
+Use only the raw custom emoji ID as the value. Do not paste the emoji character itself.
+
 ## Deploy With Docker Compose
 
 Docker Compose is the recommended deployment path.
