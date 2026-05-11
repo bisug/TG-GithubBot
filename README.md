@@ -85,7 +85,7 @@ Some event types only apply to organization, enterprise, marketplace, or GitHub 
 
 ## Requirements
 
-- Go 1.25 or newer for manual builds.
+- Go 1.26.3 or newer for manual builds.
 - Docker and Docker Compose for recommended deployment.
 - A Telegram bot token from [@BotFather](https://t.me/BotFather).
 - A GitHub OAuth App.
@@ -601,6 +601,7 @@ Without the original `ENCRYPTION_KEY`, encrypted tokens cannot be recovered.
 Check:
 
 - `TELEGRAM_WEBHOOK_URL` is correct.
+- `TELEGRAM_WEBHOOK_URL` has no path. Use `https://your-domain.com`, not `https://your-domain.com/oauth/callback`.
 - The GitHub OAuth App callback URL is exactly:
 
   ```text
@@ -608,6 +609,10 @@ Check:
   ```
 
 - The public URL reaches the bot.
+- Your `ENCRYPTION_KEY` did not change between sending `/connect` and opening the GitHub callback.
+- On Render free, open the Render service URL first if the service is asleep, then send `/connect` again.
+
+If the browser shows `Invalid or expired state`, return to Telegram and run `/connect` again. OAuth links are intentionally short-lived.
 
 ### GitHub says webhook delivery failed
 

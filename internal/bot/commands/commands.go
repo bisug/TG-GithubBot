@@ -75,19 +75,33 @@ func (h *CommandHandler) Connect(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	msg := fmt.Sprintf("Please [connect your GitHub account](%s) to enable automatic webhook setup and perform actions like approving PRs.", url)
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
-	return err
+	return h.replyWithConnectButton(b, ctx, "Connect your GitHub account to enable automatic webhook setup and actions like approving PRs.", url)
 }
 
 func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
-	state, err := gh.GenerateState()
+	nonce, err := gh.GenerateState()
+	if err != nil {
+		return "", err
+	}
+
+	state, err := utils.Encrypt(fmt.Sprintf("%d:%d:%s", userID, time.Now().Unix(), nonce), h.EncryptionKey)
 	if err != nil {
 		return "", err
 	}
 
 	h.StateCache.Set(state, userID, 10*time.Minute)
 	return h.OAuth.GetLoginURL(state), nil
+}
+
+func (h *CommandHandler) replyWithConnectButton(b *gotgbot.Bot, ctx *ext.Context, text string, url string) error {
+	_, err := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{{Text: "Connect GitHub", Url: url}},
+			},
+		},
+	})
+	return err
 }
 
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -108,9 +122,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		if err != nil {
 			return err
 		}
-		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first to link repository %s.", url, repoFullName)
-		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
-		return nil
+		return h.replyWithConnectButton(b, ctx, fmt.Sprintf("Connect your GitHub account first to link repository %s.", repoFullName), url)
 	}
 
 	token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
@@ -622,8 +634,7 @@ func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context
 		if urlErr != nil {
 			return nil, urlErr
 		}
-		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first.", url)
-		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+		_ = h.replyWithConnectButton(b, ctx, "Connect your GitHub account first.", url)
 		return nil, fmt.Errorf("auth required")
 	}
 

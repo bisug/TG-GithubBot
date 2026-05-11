@@ -1,13 +1,13 @@
 module github-webhook
 
-go 1.25.0
+go 1.26.3
 
 require (
-	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.1
 	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.34
 	github.com/google/go-github/v85 v85.0.0
 	github.com/joho/godotenv v1.5.1
-	go.mongodb.org/mongo-driver/v2 v2.5.1
+	go.mongodb.org/mongo-driver/v2 v2.6.0
 	golang.org/x/oauth2 v0.36.0
 )
 

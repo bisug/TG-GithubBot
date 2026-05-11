@@ -6,6 +6,8 @@ import (
 	"github-webhook/internal/bot/middleware"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github-webhook/internal/bot/callbacks"
@@ -131,9 +133,10 @@ func main() {
 			return
 		}
 
-		telegramID, ok := oauthStateCache.Get(state)
-		if !ok {
-			http.Error(w, "Invalid or expired state", http.StatusBadRequest)
+		telegramID, err := resolveOAuthState(state, oauthStateCache, cfg.EncryptionKey)
+		if err != nil {
+			log.Printf("OAuth callback rejected: %v", err)
+			http.Error(w, "Invalid or expired state. Please return to Telegram and run /connect again.", http.StatusBadRequest)
 			return
 		}
 
@@ -192,4 +195,40 @@ func main() {
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+func resolveOAuthState(state string, stateCache *cache.Cache[string, int64], encryptionKey string) (int64, error) {
+	if state == "" {
+		return 0, fmt.Errorf("missing state")
+	}
+
+	if telegramID, ok := stateCache.Get(state); ok {
+		return telegramID, nil
+	}
+
+	decrypted, err := utils.Decrypt(state, encryptionKey)
+	if err != nil {
+		return 0, fmt.Errorf("decrypt state: %w", err)
+	}
+
+	parts := strings.Split(decrypted, ":")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("invalid state format")
+	}
+
+	telegramID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || telegramID == 0 {
+		return 0, fmt.Errorf("invalid telegram id")
+	}
+
+	createdAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid state timestamp")
+	}
+
+	if time.Since(time.Unix(createdAt, 0)) > 10*time.Minute {
+		return 0, fmt.Errorf("state expired")
+	}
+
+	return telegramID, nil
 }
