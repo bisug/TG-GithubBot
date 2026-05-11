@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -45,20 +46,21 @@ func Load() *Config {
 		log.Fatalf("Missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
-	if err := validateEncryptionKey(os.Getenv("ENCRYPTION_KEY")); err != nil {
+	encryptionKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
+	if err := validateEncryptionKey(encryptionKey); err != nil {
 		log.Fatalf("Invalid ENCRYPTION_KEY: %v", err)
 	}
 
 	return &Config{
-		TelegramToken:       os.Getenv("TELEGRAM_TOKEN"),
-		TelegramWebhookURL:  strings.TrimRight(os.Getenv("TELEGRAM_WEBHOOK_URL"), "/"),
-		MongoDBURI:          os.Getenv("MONGODB_URI"),
+		TelegramToken:       strings.TrimSpace(os.Getenv("TELEGRAM_TOKEN")),
+		TelegramWebhookURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_URL")), "/"),
+		MongoDBURI:          strings.TrimSpace(os.Getenv("MONGODB_URI")),
 		DatabaseName:        getEnv("DATABASE_NAME", "github_bot"),
-		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		GitHubClientID:      os.Getenv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret:  os.Getenv("GITHUB_CLIENT_SECRET"),
+		GitHubWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")),
+		GitHubClientID:      strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")),
+		GitHubClientSecret:  strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET")),
 		Port:                getEnv("PORT", "8080"),
-		EncryptionKey:       os.Getenv("ENCRYPTION_KEY"),
+		EncryptionKey:       encryptionKey,
 	}
 }
 
@@ -81,11 +83,5 @@ func validateEncryptionKey(key string) error {
 		return nil
 	}
 
-	return errInvalidEncryptionKeyLength{}
-}
-
-type errInvalidEncryptionKeyLength struct{}
-
-func (errInvalidEncryptionKeyLength) Error() string {
-	return "must be 16, 24, or 32 raw characters, or 64 hex characters from 32 random bytes"
+	return fmt.Errorf("must be 16, 24, or 32 raw characters, or 64 hex characters from 32 random bytes; got length %d after trimming spaces", len(key))
 }
