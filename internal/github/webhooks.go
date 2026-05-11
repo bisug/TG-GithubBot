@@ -20,6 +20,8 @@ import (
 	"github.com/google/go-github/v85/github"
 )
 
+var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+
 type WebhookServer struct {
 	Config       *config.Config
 	DB           *db.DB
@@ -41,6 +43,7 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	//log.Printf("Received webhook request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 	// Path: /webhook/<token>
+	receivedAt := time.Now()
 	var chatID int64
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
@@ -72,7 +75,8 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, err := github.ParseWebHook(github.WebHookType(r), payload)
+	eventType := github.WebHookType(r)
+	event, err := github.ParseWebHook(eventType, payload)
 	if err != nil {
 		log.Printf("Error: Webhook parsing failed: %v", err)
 		http.Error(w, "Parse error", http.StatusInternalServerError)
@@ -84,11 +88,12 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
 
-	go s.processEvent(event, chatID, hookID)
+	deliveryID := r.Header.Get("X-GitHub-Delivery")
+	go s.processEvent(event, chatID, hookID, eventType, deliveryID, receivedAt)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int64) {
+func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int64, eventType string, deliveryID string, receivedAt time.Time) {
 	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
 		newFullName := e.GetRepo().GetFullName()
 		if newFullName != "" && hookID != 0 {
@@ -103,6 +108,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 
 	msg, markup := s.formatMessage(event)
 	if msg == "" {
+		log.Printf("Webhook skipped: empty formatted message event=%s delivery=%s chat=%d elapsed=%s", eventType, deliveryID, chatID, time.Since(receivedAt).Round(time.Millisecond))
 		return
 	}
 
@@ -118,11 +124,22 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 
 	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)
 	if err != nil {
-		log.Printf("Error sending message to chat %d: %v", chatID, err)
-		return
+		log.Printf("Markdown send failed; retrying plain text chat=%d event=%s delivery=%s error=%v", chatID, eventType, deliveryID, err)
+		fallbackOpts := &gotgbot.SendMessageOpts{
+			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
+				IsDisabled: true,
+			},
+			ReplyMarkup: markup,
+		}
+		sentMsg, err = s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
+		if err != nil {
+			log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
+			return
+		}
 	}
 
 	s.storeMessageContext(sentMsg.MessageId, chatID, event)
+	log.Printf("Webhook delivered chat=%d event=%s delivery=%s message_id=%d elapsed=%s", chatID, eventType, deliveryID, sentMsg.MessageId, time.Since(receivedAt).Round(time.Millisecond))
 }
 
 // normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
@@ -142,6 +159,25 @@ func normalizeMessage(s string) string {
 
 	out = strings.TrimSpace(out)
 	return out
+}
+
+func plainTextForTelegram(s string) string {
+	s = markdownLinkPattern.ReplaceAllString(s, "$1 ($2)")
+	replacer := strings.NewReplacer(
+		"\\", "",
+		"*", "",
+		"_", "",
+		"`", "",
+		"~", "",
+		"||", "",
+	)
+	s = replacer.Replace(s)
+	const maxTelegramText = 4096
+	runes := []rune(s)
+	if len(runes) <= maxTelegramText {
+		return s
+	}
+	return string(runes[:maxTelegramText-1]) + "…"
 }
 
 func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event interface{}) {

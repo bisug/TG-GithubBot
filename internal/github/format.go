@@ -3,7 +3,6 @@ package github
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -24,7 +23,7 @@ func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboa
 			"*Title:* %s\n\n"+
 			"*Repository:* %s\n"+
 			"*By:* %s\n",
-		EscapeMarkdownV2(strings.Title(action)),
+		EscapeMarkdownV2(titleText(action)),
 		number,
 		EscapeMarkdownV2(title),
 		FormatRepo(repo),
@@ -77,7 +76,7 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 		"*🚀 PR %s \\#%d: %s*\n\n"+
 			"*Repository:* %s\n"+
 			"*By:* %s \\| *State:* %s\n",
-		EscapeMarkdownV2(strings.Title(action)),
+		EscapeMarkdownV2(titleText(action)),
 		number,
 		EscapeMarkdownV2(title),
 		FormatRepo(repo),
@@ -124,10 +123,17 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 }
 
 func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMarkup) {
-	repo := event.Repo.GetName()
+	repo := event.Repo.GetFullName()
+	if repo == "" {
+		repo = event.Repo.GetName()
+	}
 	repoURL := event.Repo.GetHTMLURL()
-	branch := strings.TrimPrefix(event.GetRef(), "refs/heads/")
+	if repoURL == "" && repo != "" {
+		repoURL = fmt.Sprintf("https://github.com/%s", repo)
+	}
+	refType, refName := pushRefParts(event.GetRef())
 	compareURL := event.GetCompare()
+	buttonURL := firstNonEmpty(compareURL, repoURL)
 
 	var commits []*github.HeadCommit
 	if len(event.Commits) > 0 {
@@ -137,38 +143,49 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 	}
 
 	commitCount := len(commits)
-	if commitCount == 0 {
-		return "", nil
-	}
-
 	var commitPlural string
 	if commitCount > 1 {
 		commitPlural = "s"
 	}
-	msg := fmt.Sprintf(
-		"🔨 *%d new commit%s to* `%s:%s`\n\n",
-		commitCount, commitPlural, EscapeMarkdownV2(repo), EscapeMarkdownV2(branch),
-	)
+	title := fmt.Sprintf("🔨 *%d new commit%s to* `%s:%s`\n\n", commitCount, commitPlural, EscapeMarkdownV2(repo), EscapeMarkdownV2(refName))
+	if commitCount == 0 {
+		title = fmt.Sprintf("🔨 *Push to* `%s:%s`\n\n", EscapeMarkdownV2(repo), EscapeMarkdownV2(refName))
+	}
+	msg := title
 
 	if event.GetCreated() {
-		msg += "🌱 _New branch created_\n"
+		msg += fmt.Sprintf("🌱 _New %s created_\n", EscapeMarkdownV2(refType))
 	} else if event.GetDeleted() {
-		msg += "🗑️ _Branch deleted_\n"
+		msg += fmt.Sprintf("🗑️ _%s deleted_\n", EscapeMarkdownV2(titleText(refType)))
 	} else if event.GetForced() {
 		msg += "⚠️ _Force pushed_\n"
 	}
 
-	for _, commit := range commits {
+	if commitCount == 0 {
+		msg += "_No commits were included in this GitHub payload\\._\n"
+		return FormatMessageWithButton(msg, "View Repository", buttonURL)
+	}
+
+	const maxPushCommits = 10
+	shownCommits := commits
+	if len(shownCommits) > maxPushCommits {
+		shownCommits = shownCommits[:maxPushCommits]
+	}
+
+	for _, commit := range shownCommits {
 		shortSHA := ShortSHA(commit.GetID())
 		commitURL := fmt.Sprintf("%s/commit/%s", repoURL, commit.GetID())
+		if buttonURL == "" {
+			buttonURL = commitURL
+		}
 		var authorStr string
-		if login := commit.Author.GetLogin(); login != "" {
+		if login := commit.GetAuthor().GetLogin(); login != "" {
 			authorStr = FormatUser(login)
 		} else {
-			authorStr = EscapeMarkdownV2(commit.Author.GetName())
+			authorStr = EscapeMarkdownV2(firstNonEmpty(commit.GetAuthor().GetName(), "unknown"))
 		}
 
-		commitMessage := FormatTextWithMarkdown(commit.GetMessage())
+		commitMessage := EscapeMarkdownV2(truncateText(firstLine(commit.GetMessage()), 180))
 
 		msg += fmt.Sprintf(
 			"\\- [%s](%s): %s by %s\n",
@@ -179,11 +196,15 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 		)
 	}
 
+	if remaining := commitCount - len(shownCommits); remaining > 0 {
+		msg += fmt.Sprintf("_\\+%d more commit%s not shown\\._\n", remaining, pluralSuffix(remaining))
+	}
+
 	if len(msg) > 4000 {
 		msg = fmt.Sprintf(
 			"🔨 *%d new commit(s) to* `%s:%s`\n\n"+
 				"⚠️ _Too many commits to display, check the repository for details\\._\n",
-			commitCount, EscapeMarkdownV2(repo), EscapeMarkdownV2(branch),
+			commitCount, EscapeMarkdownV2(repo), EscapeMarkdownV2(refName),
 		)
 	}
 
@@ -191,7 +212,69 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 		commitURL := fmt.Sprintf("%s/commit/%s", repoURL, commits[0].GetID())
 		return FormatMessageWithButton(msg, "View Commit", commitURL)
 	}
-	return FormatMessageWithButton(msg, "View Commits", compareURL)
+	return FormatMessageWithButton(msg, "View Commits", buttonURL)
+}
+
+func pushRefParts(ref string) (string, string) {
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		return "branch", strings.TrimPrefix(ref, "refs/heads/")
+	case strings.HasPrefix(ref, "refs/tags/"):
+		return "tag", strings.TrimPrefix(ref, "refs/tags/")
+	case ref != "":
+		return "ref", ref
+	default:
+		return "ref", "unknown"
+	}
+}
+
+func firstLine(text string) string {
+	text = strings.TrimSpace(text)
+	if line, _, ok := strings.Cut(text, "\n"); ok {
+		return strings.TrimSpace(line)
+	}
+	if text == "" {
+		return "No commit message"
+	}
+	return text
+}
+
+func truncateText(text string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes-1]) + "…"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func titleText(text string) string {
+	words := strings.Fields(strings.ReplaceAll(text, "_", " "))
+	for i, word := range words {
+		if word == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(word[:1]) + word[1:]
+	}
+	return strings.Join(words, " ")
 }
 
 func FormatCreateEvent(event *github.CreateEvent) (string, *gotgbot.InlineKeyboardMarkup) {
@@ -467,7 +550,6 @@ func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotgbot.InlineKeyb
 
 func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	action := event.GetAction()
-	log.Printf("Watch action: %s", action)
 	if action == "started" {
 		repo := event.GetRepo()
 		msg := fmt.Sprintf(
@@ -509,7 +591,7 @@ func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboa
 			"*Status:* %s\n"+
 			"*By:* %s",
 		stateEmoji,
-		EscapeMarkdownV2(strings.Title(state)),
+		EscapeMarkdownV2(titleText(state)),
 		EscapeMarkdownV2(ShortSHA(event.GetCommit().GetSHA())),
 		EscapeMarkdownV2URL(event.GetCommit().GetHTMLURL()),
 		FormatRepo(event.GetRepo().GetFullName()),
@@ -587,7 +669,7 @@ func FormatWorkflowJobEvent(e *github.WorkflowJobEvent) (string, *gotgbot.Inline
 	status := job.GetStatus()
 	conclusion := job.GetConclusion()
 	statusEmoji := "⚙️"
-	statusText := strings.Title(status)
+	statusText := titleText(status)
 
 	switch {
 	case status == "completed" && conclusion == "success":
@@ -1763,7 +1845,7 @@ func FormatCheckSuiteEvent(e *github.CheckSuiteEvent) (string, *gotgbot.InlineKe
 	suite := e.GetCheckSuite()
 	var msg strings.Builder
 
-	action := strings.Title(e.GetAction())
+	action := titleText(e.GetAction())
 	msg.WriteString(fmt.Sprintf("✅ *Check Suite: %s*\n\n", EscapeMarkdownV2(action)))
 
 	if suite != nil {
@@ -1793,7 +1875,7 @@ func FormatCheckRunEvent(e *github.CheckRunEvent) (string, *gotgbot.InlineKeyboa
 	check := e.GetCheckRun()
 	var msg strings.Builder
 
-	action := strings.Title(e.GetAction())
+	action := titleText(e.GetAction())
 	msg.WriteString(fmt.Sprintf("⚙️ *Check Run: %s*\n\n", EscapeMarkdownV2(action)))
 
 	if check != nil {
