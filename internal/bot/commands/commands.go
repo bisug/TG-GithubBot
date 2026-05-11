@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github-webhook/internal/cache"
@@ -102,6 +104,69 @@ func (h *CommandHandler) replyWithConnectButton(b *gotgbot.Bot, ctx *ext.Context
 		},
 	})
 	return err
+}
+
+func settingsCallback(parts ...string) string {
+	return strings.Join(parts, ":")
+}
+
+func addRepoPageCallback(page int) string {
+	return settingsCallback("c", "ar", "pg", strconv.Itoa(page))
+}
+
+func addRepoIDCallback(repoID int64) string {
+	return settingsCallback("c", "ar", "id", strconv.FormatInt(repoID, 10))
+}
+
+func repoSettingsCallback(link models.RepoLink) string {
+	linkID := link.RepoFullName
+	if link.WebhookID != 0 {
+		linkID = strconv.FormatInt(link.WebhookID, 10)
+	}
+	return settingsCallback("c", "r", linkID)
+}
+
+func compactButtonText(name string) string {
+	const max = 42
+	if len(name) <= max {
+		return name
+	}
+	return name[:max-1] + "…"
+}
+
+func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboardButton {
+	var navRow []gotgbot.InlineKeyboardButton
+
+	if resp.FirstPage != 0 && resp.PrevPage != 0 {
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "<", CallbackData: addRepoPageCallback(resp.PrevPage)})
+	}
+
+	startPage := page - 1
+	if startPage < 1 {
+		startPage = 1
+	}
+
+	endPage := page + 1
+	if resp.LastPage != 0 && endPage > resp.LastPage {
+		endPage = resp.LastPage
+	}
+	if resp.LastPage == 0 && resp.NextPage != 0 {
+		endPage = resp.NextPage
+	}
+
+	for i := startPage; i <= endPage; i++ {
+		text := strconv.Itoa(i)
+		if i == page {
+			text = "· " + text + " ·"
+		}
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: addRepoPageCallback(i)})
+	}
+
+	if resp.NextPage != 0 {
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: ">", CallbackData: addRepoPageCallback(resp.NextPage)})
+	}
+
+	return navRow
 }
 
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -260,42 +325,11 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: repo.GetFullName(), CallbackData: fmt.Sprintf("c:ar:id:%d", repo.GetID())},
+			{Text: compactButtonText(repo.GetFullName()), CallbackData: addRepoIDCallback(repo.GetID())},
 		})
 	}
 
-	var navRow []gotgbot.InlineKeyboardButton
-
-	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "< Prev", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.PrevPage)})
-	}
-
-	startPage := page - 1
-	if startPage < 1 {
-		startPage = 1
-	}
-	endPage := page + 1
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-
-	if resp.LastPage == 0 && resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-
-	for i := startPage; i <= endPage; i++ {
-		text := fmt.Sprintf("%d", i)
-		if i == page {
-			text = fmt.Sprintf("· %d ·", i)
-		}
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: fmt.Sprintf("c:ar:pg:%d", i)})
-	}
-
-	if resp.NextPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "Next >", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.NextPage)})
-	}
-
-	if len(navRow) > 0 {
+	if navRow := repoPageKeyboardNav(page, resp); len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 
@@ -323,12 +357,8 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
-		linkID := l.RepoFullName
-		if l.WebhookID != 0 {
-			linkID = fmt.Sprintf("%d", l.WebhookID)
-		}
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", linkID)},
+			{Text: compactButtonText(l.RepoFullName), CallbackData: repoSettingsCallback(l)},
 		})
 	}
 

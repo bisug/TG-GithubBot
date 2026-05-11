@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,78 @@ func init() {
 	}
 }
 
+const (
+	cbPrefixSettings = "c"
+	cbListRepos      = "ls"
+	cbRepoMenu       = "r"
+	cbAddRepo        = "ar"
+	cbToggleEvent    = "te"
+	cbPresets        = "presets"
+	cbIndividual     = "iev"
+	cbStop           = "stop"
+	cbStopConfirm    = "stopok"
+)
+
+func cb(parts ...string) string {
+	return strings.Join(parts, ":")
+}
+
+func cbRepo(action string, link *models.RepoLink, extra ...string) string {
+	parts := append([]string{cbPrefixSettings, action, callbackLinkID(link)}, extra...)
+	return cb(parts...)
+}
+
+func cbAddRepoPage(page int) string {
+	return cb(cbPrefixSettings, cbAddRepo, "pg", strconv.Itoa(page))
+}
+
+func cbAddRepoID(repoID int64) string {
+	return cb(cbPrefixSettings, cbAddRepo, "id", strconv.FormatInt(repoID, 10))
+}
+
+func repoButtonText(name string) string {
+	const max = 42
+	if len(name) <= max {
+		return name
+	}
+	return name[:max-1] + "…"
+}
+
+func repoPageNav(page int, resp *gh.Response) []gotgbot.InlineKeyboardButton {
+	var navRow []gotgbot.InlineKeyboardButton
+
+	if resp.FirstPage != 0 && resp.PrevPage != 0 {
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "<", CallbackData: cbAddRepoPage(resp.PrevPage)})
+	}
+
+	startPage := page - 1
+	if startPage < 1 {
+		startPage = 1
+	}
+
+	endPage := page + 1
+	if resp.LastPage != 0 && endPage > resp.LastPage {
+		endPage = resp.LastPage
+	}
+	if resp.LastPage == 0 && resp.NextPage != 0 {
+		endPage = resp.NextPage
+	}
+
+	for i := startPage; i <= endPage; i++ {
+		text := strconv.Itoa(i)
+		if i == page {
+			text = "· " + text + " ·"
+		}
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: cbAddRepoPage(i)})
+	}
+
+	if resp.NextPage != 0 {
+		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: ">", CallbackData: cbAddRepoPage(resp.NextPage)})
+	}
+
+	return navRow
+}
+
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can change settings", ShowAlert: true})
@@ -67,18 +140,20 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 	// c:ep -> conf:evt_pg
 
 	if len(parts) < 2 {
+		log.Printf("Ignoring malformed callback data: %q", data)
 		return nil
 	}
 
 	prefix := parts[0] // c, conf
 	action := parts[1] // ls, r, te, ep
 
-	if prefix == "c" {
-		if action == "ls" {
+	if prefix == cbPrefixSettings {
+		if action == cbListRepos {
 			return h.showRepoList(b, ctx)
 		}
-		if action == "ar" {
+		if action == cbAddRepo {
 			if len(parts) < 4 {
+				log.Printf("Ignoring malformed add-repo callback data: %q", data)
 				return nil
 			}
 			subAction := parts[2]
@@ -93,6 +168,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 		}
 
 		if len(parts) < 3 {
+			log.Printf("Ignoring malformed settings callback data: %q", data)
 			return nil
 		}
 
@@ -102,12 +178,12 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return nil
 		}
 
-		if action == "r" {
+		if action == cbRepoMenu {
 			// c:r:linkID
 			return h.showRepoMenu(b, ctx, link)
 		}
 
-		if action == "te" && len(parts) >= 4 {
+		if action == cbToggleEvent && len(parts) >= 4 {
 			// c:te:linkID:shortEvt:page
 			shortEvt := parts[3]
 			page := 1
@@ -187,11 +263,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			}
 
 			return h.showIndividualEvents(b, ctx, link, page)
-		} else if action == "ep" && len(parts) == 4 {
-			// c:ep:linkID:page
-			page, _ := strconv.Atoi(parts[3])
-			return h.showIndividualEvents(b, ctx, link, page)
-		} else if action == "presets" && len(parts) >= 3 {
+		} else if action == cbPresets && len(parts) >= 3 {
 			// c:presets:linkID:mode
 			// mode: push, all
 			if len(parts) < 4 {
@@ -199,10 +271,14 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			}
 			mode := parts[3]
 			return h.handlePresets(b, ctx, link, mode)
-		} else if action == "iev" && len(parts) == 4 {
+		} else if action == cbIndividual && len(parts) == 4 {
 			// c:iev:linkID:page
 			page, _ := strconv.Atoi(parts[3])
 			return h.showIndividualEvents(b, ctx, link, page)
+		} else if action == cbStop {
+			return h.showStopNotificationsConfirm(b, ctx, link)
+		} else if action == cbStopConfirm {
+			return h.handleStopNotifications(b, ctx, link)
 		}
 	}
 
@@ -241,28 +317,84 @@ func callbackLinkID(l *models.RepoLink) string {
 
 func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
 	var kb [][]gotgbot.InlineKeyboardButton
-	linkID := callbackLinkID(l)
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Just the push event", CallbackData: fmt.Sprintf("c:presets:%s:push", linkID)},
+		{Text: "Push only", CallbackData: cbRepo(cbPresets, l, "push")},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Send me everything", CallbackData: fmt.Sprintf("c:presets:%s:all", linkID)},
+		{Text: "All events", CallbackData: cbRepo(cbPresets, l, "all")},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Let me select individual events", CallbackData: fmt.Sprintf("c:iev:%s:1", linkID)},
+		{Text: "Choose events", CallbackData: cbRepo(cbIndividual, l, "1")},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "🔙 Back to Repo List", CallbackData: "c:ls"},
+		{Text: "Stop notifications", CallbackData: cbRepo(cbStop, l)},
+	})
+
+	kb = append(kb, []gotgbot.InlineKeyboardButton{
+		{Text: "Back", CallbackData: cb(cbPrefixSettings, cbListRepos)},
 	})
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
+	return err
+}
+
+func (h *CallbackHandler) showStopNotificationsConfirm(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
+	kb := [][]gotgbot.InlineKeyboardButton{
+		{{Text: "Stop notifications", CallbackData: cbRepo(cbStopConfirm, l)}},
+		{{Text: "Cancel", CallbackData: cbRepo(cbRepoMenu, l)}},
+	}
+
+	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ParseMode:   "HTML",
+	})
+	return err
+}
+
+func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
+	warning := ""
+
+	if l.WebhookID != 0 {
+		user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+		if err != nil || user.EncryptedOAuthToken == "" {
+			warning = "\n\nWarning: your GitHub account is not connected, so the GitHub webhook could not be removed automatically."
+		} else {
+			token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+			if err != nil {
+				warning = "\n\nWarning: your GitHub token could not be decrypted, so the GitHub webhook was not removed automatically."
+			} else {
+				parts := strings.Split(l.RepoFullName, "/")
+				if len(parts) == 2 {
+					client := h.ClientFactory.GetUserClient(context.Background(), token)
+					_, err = client.Repositories.DeleteHook(context.Background(), parts[0], parts[1], l.WebhookID)
+					if err != nil {
+						if h.handleAuthError(b, ctx, err) {
+							return nil
+						}
+
+						var errResp *gh.ErrorResponse
+						if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
+							warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %v", err)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if err := h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, l.RepoFullName); err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to update database.", ShowAlert: true})
+		return nil
+	}
+
+	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Notifications stopped for <b>%s</b>.%s", l.RepoFullName, warning), &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	return err
 }
 
@@ -320,7 +452,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	kb := [][]gotgbot.InlineKeyboardButton{
-		{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", callbackLinkID(l))}},
+		{{Text: "Back", CallbackData: cbRepo(cbRepoMenu, l)}},
 	}
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
@@ -374,7 +506,6 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	var row []gotgbot.InlineKeyboardButton
-	linkID := callbackLinkID(l)
 
 	for _, e := range github.SupportedEvents {
 		status := "❌"
@@ -382,8 +513,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 			status = "✅"
 		}
 
-		// c:te:linkID:shortEvt:page
-		cbData := fmt.Sprintf("c:te:%s:%s:%d", linkID, e.Short, page)
+		cbData := cbRepo(cbToggleEvent, l, e.Short, strconv.Itoa(page))
 		btnText := fmt.Sprintf("%s %s", status, e.Label)
 
 		row = append(row, gotgbot.InlineKeyboardButton{Text: btnText, CallbackData: cbData})
@@ -402,7 +532,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		{Text: "🌐 Edit more on GitHub", Url: webhookSettingsURL},
 	})
 
-	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", linkID)}})
+	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "Back", CallbackData: cbRepo(cbRepoMenu, l)}})
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
@@ -425,7 +555,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", callbackLinkID(&l))},
+			{Text: repoButtonText(l.RepoFullName), CallbackData: cbRepo(cbRepoMenu, &l)},
 		})
 	}
 
@@ -467,40 +597,11 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: repo.GetFullName(), CallbackData: fmt.Sprintf("c:ar:id:%d", repo.GetID())},
+			{Text: repoButtonText(repo.GetFullName()), CallbackData: cbAddRepoID(repo.GetID())},
 		})
 	}
 
-	var navRow []gotgbot.InlineKeyboardButton
-	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "< Prev", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.PrevPage)})
-	}
-
-	startPage := page - 1
-	if startPage < 1 {
-		startPage = 1
-	}
-	endPage := page + 1
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-	if resp.LastPage == 0 && resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-
-	for i := startPage; i <= endPage; i++ {
-		text := fmt.Sprintf("%d", i)
-		if i == page {
-			text = fmt.Sprintf("· %d ·", i)
-		}
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: fmt.Sprintf("c:ar:pg:%d", i)})
-	}
-
-	if resp.NextPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "Next >", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.NextPage)})
-	}
-
-	if len(navRow) > 0 {
+	if navRow := repoPageNav(page, resp); len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 
