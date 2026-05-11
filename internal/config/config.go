@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"log"
 	"os"
 	"strings"
@@ -44,6 +45,10 @@ func Load() *Config {
 		log.Fatalf("Missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
+	if err := validateEncryptionKey(os.Getenv("ENCRYPTION_KEY")); err != nil {
+		log.Fatalf("Invalid ENCRYPTION_KEY: %v", err)
+	}
+
 	return &Config{
 		TelegramToken:       os.Getenv("TELEGRAM_TOKEN"),
 		TelegramWebhookURL:  strings.TrimRight(os.Getenv("TELEGRAM_WEBHOOK_URL"), "/"),
@@ -62,4 +67,25 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func validateEncryptionKey(key string) error {
+	if len(key) == 64 {
+		if _, err := hex.DecodeString(key); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if len(key) == 32 || len(key) == 24 || len(key) == 16 {
+		return nil
+	}
+
+	return errInvalidEncryptionKeyLength{}
+}
+
+type errInvalidEncryptionKeyLength struct{}
+
+func (errInvalidEncryptionKeyLength) Error() string {
+	return "must be 16, 24, or 32 raw characters, or 64 hex characters from 32 random bytes"
 }
