@@ -148,3 +148,10 @@ func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *go
 		},
 	}
 }
+
+func ShortSHA(sha string) string {
+	if len(sha) <= 7 {
+		return sha
+	}
+	return sha[:7]
+}

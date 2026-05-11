@@ -334,6 +334,6 @@ func (s *WebhookServer) formatMessage(event interface{}) (string, *gotgbot.Inlin
 	case *github.InstallationEvent:
 		return FormatInstallationEvent(e)
 	default:
-		return "", nil
+		return FormatGenericEvent(event)
 	}
 }

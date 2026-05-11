@@ -3,3 +3,16 @@ services:
     build: .
     restart: always
     env_file: .env
+    depends_on:
+      - mongo
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+
+  mongo:
+    image: mongo:7
+    restart: always
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

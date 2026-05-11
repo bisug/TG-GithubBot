@@ -78,7 +78,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return h.showRepoList(b, ctx)
 		}
 		if action == "ar" {
-			if len(parts) < 3 {
+			if len(parts) < 4 {
 				return nil
 			}
 			subAction := parts[2]
@@ -96,20 +96,19 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return nil
 		}
 
-		repoName := parts[2]
-		link, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoName)
+		link, err := h.resolveRepoLink(context.Background(), ctx.EffectiveChat.Id, parts[2])
 		if err != nil {
 			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Repo not found"})
 			return nil
 		}
 
 		if action == "r" {
-			// c:r:repo
+			// c:r:linkID
 			return h.showRepoMenu(b, ctx, link)
 		}
 
 		if action == "te" && len(parts) >= 4 {
-			// c:te:repo:shortEvt:page
+			// c:te:linkID:shortEvt:page
 			shortEvt := parts[3]
 			page := 1
 			if len(parts) == 5 {
@@ -189,11 +188,11 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 
 			return h.showIndividualEvents(b, ctx, link, page)
 		} else if action == "ep" && len(parts) == 4 {
-			// c:ep:repo:page
+			// c:ep:linkID:page
 			page, _ := strconv.Atoi(parts[3])
 			return h.showIndividualEvents(b, ctx, link, page)
 		} else if action == "presets" && len(parts) >= 3 {
-			// c:presets:repo:mode
+			// c:presets:linkID:mode
 			// mode: push, all
 			if len(parts) < 4 {
 				return nil
@@ -201,7 +200,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			mode := parts[3]
 			return h.handlePresets(b, ctx, link, mode)
 		} else if action == "iev" && len(parts) == 4 {
-			// c:iev:repo:page
+			// c:iev:linkID:page
 			page, _ := strconv.Atoi(parts[3])
 			return h.showIndividualEvents(b, ctx, link, page)
 		}
@@ -210,19 +209,50 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 	return nil
 }
 
+func (h *CallbackHandler) resolveRepoLink(ctx context.Context, chatID int64, linkID string) (*models.RepoLink, error) {
+	links, err := h.DB.GetChatLinks(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	if webhookID, err := strconv.ParseInt(linkID, 10, 64); err == nil && webhookID != 0 {
+		for _, link := range links {
+			if link.WebhookID == webhookID {
+				return &link, nil
+			}
+		}
+	}
+
+	for _, link := range links {
+		if link.RepoFullName == linkID {
+			return &link, nil
+		}
+	}
+
+	return nil, errors.New("link not found")
+}
+
+func callbackLinkID(l *models.RepoLink) string {
+	if l.WebhookID != 0 {
+		return strconv.FormatInt(l.WebhookID, 10)
+	}
+	return l.RepoFullName
+}
+
 func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
 	var kb [][]gotgbot.InlineKeyboardButton
+	linkID := callbackLinkID(l)
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Just the push event", CallbackData: fmt.Sprintf("c:presets:%s:push", l.RepoFullName)},
+		{Text: "Just the push event", CallbackData: fmt.Sprintf("c:presets:%s:push", linkID)},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Send me everything", CallbackData: fmt.Sprintf("c:presets:%s:all", l.RepoFullName)},
+		{Text: "Send me everything", CallbackData: fmt.Sprintf("c:presets:%s:all", linkID)},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		{Text: "Let me select individual events", CallbackData: fmt.Sprintf("c:iev:%s:1", l.RepoFullName)},
+		{Text: "Let me select individual events", CallbackData: fmt.Sprintf("c:iev:%s:1", linkID)},
 	})
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{
@@ -290,7 +320,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	kb := [][]gotgbot.InlineKeyboardButton{
-		{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)}},
+		{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", callbackLinkID(l))}},
 	}
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
@@ -344,6 +374,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	var row []gotgbot.InlineKeyboardButton
+	linkID := callbackLinkID(l)
 
 	for _, e := range github.SupportedEvents {
 		status := "❌"
@@ -351,8 +382,8 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 			status = "✅"
 		}
 
-		// c:te:repo:shortEvt:page
-		cbData := fmt.Sprintf("c:te:%s:%s:%d", l.RepoFullName, e.Short, page)
+		// c:te:linkID:shortEvt:page
+		cbData := fmt.Sprintf("c:te:%s:%s:%d", linkID, e.Short, page)
 		btnText := fmt.Sprintf("%s %s", status, e.Label)
 
 		row = append(row, gotgbot.InlineKeyboardButton{Text: btnText, CallbackData: cbData})
@@ -371,7 +402,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		{Text: "🌐 Edit more on GitHub", Url: webhookSettingsURL},
 	})
 
-	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)}})
+	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", linkID)}})
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
@@ -394,7 +425,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)},
+			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", callbackLinkID(&l))},
 		})
 	}
 
@@ -482,11 +513,16 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 
 func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, repoID int64) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil {
+	if err != nil || user.EncryptedOAuthToken == "" {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Please /connect to GitHub first.", ShowAlert: true})
 		return nil
 	}
 
-	token, _ := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	if err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error.", ShowAlert: true})
+		return nil
+	}
 	client := h.ClientFactory.GetUserClient(context.Background(), token)
 
 	repo, _, err := client.Repositories.GetByID(context.Background(), repoID)
@@ -511,14 +547,9 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		Secret:      gh.String(h.Config.GitHubWebhookSecret),
 	}
 
-	var defaultEvents []string
-	for _, e := range github.SupportedEvents {
-		defaultEvents = append(defaultEvents, e.Name)
-	}
-
 	hook := &gh.Hook{
 		Name:   gh.String("web"),
-		Events: defaultEvents,
+		Events: []string{"*"},
 		Config: webhookConfig,
 		Active: gh.Bool(true),
 	}

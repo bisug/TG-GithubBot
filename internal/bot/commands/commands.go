@@ -70,18 +70,24 @@ func (h *CommandHandler) Connect(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	state, err := gh.GenerateState()
+	url, err := h.loginURLForUser(ctx.EffectiveUser.Id)
 	if err != nil {
 		return err
 	}
 
-	h.StateCache.Set(state, ctx.EffectiveUser.Id, 10*time.Minute)
-
-	url := h.OAuth.GetLoginURL(state)
-
 	msg := fmt.Sprintf("Please [connect your GitHub account](%s) to enable automatic webhook setup and perform actions like approving PRs.", url)
 	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 	return err
+}
+
+func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
+	state, err := gh.GenerateState()
+	if err != nil {
+		return "", err
+	}
+
+	h.StateCache.Set(state, userID, 10*time.Minute)
+	return h.OAuth.GetLoginURL(state), nil
 }
 
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -98,7 +104,11 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	repoFullName := args[1]
 	user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
 	if uErr != nil || user.EncryptedOAuthToken == "" {
-		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first to link repository %s.", h.OAuth.GetLoginURL("connect"), repoFullName)
+		url, err := h.loginURLForUser(ctx.EffectiveUser.Id)
+		if err != nil {
+			return err
+		}
+		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first to link repository %s.", url, repoFullName)
 		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 		return nil
 	}
@@ -154,14 +164,9 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		Secret:      github.String(h.Config.GitHubWebhookSecret),
 	}
 
-	var defaultEvents []string
-	for _, e := range gh.SupportedEvents {
-		defaultEvents = append(defaultEvents, e.Name)
-	}
-
 	hook := &github.Hook{
 		Name:   github.String("web"),
-		Events: defaultEvents,
+		Events: []string{"*"},
 		Config: webhookConfig,
 		Active: github.Bool(true),
 	}
@@ -306,8 +311,12 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
+		linkID := l.RepoFullName
+		if l.WebhookID != 0 {
+			linkID = fmt.Sprintf("%d", l.WebhookID)
+		}
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)},
+			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", linkID)},
 		})
 	}
 
@@ -609,7 +618,11 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context) (*github.Client, error) {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
 	if err != nil || user.EncryptedOAuthToken == "" {
-		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first.", h.OAuth.GetLoginURL("connect"))
+		url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
+		if urlErr != nil {
+			return nil, urlErr
+		}
+		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first.", url)
 		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
 		return nil, fmt.Errorf("auth required")
 	}

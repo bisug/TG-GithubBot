@@ -159,10 +159,7 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 	}
 
 	for _, commit := range commits {
-		shortSHA := commit.GetID()
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
-		}
+		shortSHA := ShortSHA(commit.GetID())
 		commitURL := fmt.Sprintf("%s/commit/%s", repoURL, commit.GetID())
 		var authorStr string
 		if login := commit.Author.GetLogin(); login != "" {
@@ -297,7 +294,7 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 		FormatUser(sender),
 		EscapeMarkdownV2(action),
 		FormatRepo(repo),
-		EscapeMarkdownV2(commitSHA[:7]),
+		EscapeMarkdownV2(ShortSHA(commitSHA)),
 		commitURL,
 	)
 
@@ -513,7 +510,7 @@ func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboa
 			"*By:* %s",
 		stateEmoji,
 		EscapeMarkdownV2(strings.Title(state)),
-		EscapeMarkdownV2(event.GetCommit().GetSHA()[:7]),
+		EscapeMarkdownV2(ShortSHA(event.GetCommit().GetSHA())),
 		EscapeMarkdownV2URL(event.GetCommit().GetHTMLURL()),
 		FormatRepo(event.GetRepo().GetFullName()),
 		EscapeMarkdownV2(event.GetDescription()),
@@ -1709,7 +1706,7 @@ func FormatGollumEvent(e *github.GollumEvent) (string, *gotgbot.InlineKeyboardMa
 			}
 
 			if page.SHA != nil && *page.SHA != "" {
-				msg.WriteString(fmt.Sprintf("_Revision:_ %s\n", EscapeMarkdownV2((*page.SHA)[:7])))
+				msg.WriteString(fmt.Sprintf("_Revision:_ %s\n", EscapeMarkdownV2(ShortSHA(*page.SHA))))
 			}
 			if page.HTMLURL != nil && *page.HTMLURL != "" {
 				msg.WriteString(fmt.Sprintf("[View Page](%s)\n", EscapeMarkdownV2URL(*page.HTMLURL)))
@@ -1906,5 +1903,21 @@ func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotgbot.Inli
 		msg = fmt.Sprintf("🤖 *Unknown installation action:* `%s`", EscapeMarkdownV2(action))
 	}
 
+	return msg, nil
+}
+
+func FormatGenericEvent(event interface{}) (string, *gotgbot.InlineKeyboardMarkup) {
+	if event == nil {
+		return "", nil
+	}
+
+	eventType := fmt.Sprintf("%T", event)
+	eventType = strings.TrimPrefix(eventType, "*github.")
+	msg := fmt.Sprintf(
+		"⚙️ *GitHub event received*\n\n"+
+			"*Type:* `%s`\n\n"+
+			"_This event type is supported by the webhook parser but does not have a specialized formatter yet\\._",
+		EscapeMarkdownV2(eventType),
+	)
 	return msg, nil
 }

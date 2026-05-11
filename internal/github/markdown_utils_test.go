@@ -109,6 +109,27 @@ func TestFormatUser(t *testing.T) {
 	}
 }
 
+func TestShortSHA(t *testing.T) {
+	tests := []struct {
+		name string
+		sha  string
+		want string
+	}{
+		{name: "empty", sha: "", want: ""},
+		{name: "short", sha: "abc", want: "abc"},
+		{name: "exactly seven", sha: "1234567", want: "1234567"},
+		{name: "long", sha: "1234567890abcdef", want: "1234567"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ShortSHA(tt.sha); got != tt.want {
+				t.Fatalf("ShortSHA() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatReleaseBody(t *testing.T) {
 	t.Run("Short body", func(t *testing.T) {
 		body := "Short release notes"
