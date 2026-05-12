@@ -433,11 +433,12 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	var newEvents []string
-	if mode == "push" {
+	switch mode {
+	case "push":
 		newEvents = []string{"push"}
-	} else if mode == "all" {
+	case "all":
 		newEvents = []string{"*"}
-	} else {
+	default:
 		return nil
 	}
 

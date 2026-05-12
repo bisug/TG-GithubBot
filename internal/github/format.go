@@ -1777,7 +1777,7 @@ func FormatGollumEvent(e *github.GollumEvent) (string, *gotgbot.InlineKeyboardMa
 		msg.WriteString(fmt.Sprintf("*Edited by:* %s\n", FormatUser(sender.GetLogin())))
 	}
 
-	if e.Pages != nil && len(e.Pages) > 0 {
+	if len(e.Pages) > 0 {
 		msg.WriteString("\n*Page Changes:*\n")
 		for _, page := range e.Pages {
 			if page == nil {
