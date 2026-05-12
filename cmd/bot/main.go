@@ -81,6 +81,7 @@ func run() (runErr error) {
 	})
 	updater := ext.NewUpdater(dispatcher, nil)
 	dispatcher.AddHandlerToGroup(handlers.NewMessage(nil, middleware.TrackUserAndChat(database)), -1)
+	dispatcher.AddHandlerToGroup(handlers.NewCallback(nil, middleware.TrackUserAndChat(database)), -1)
 
 	// Commands
 	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit)
@@ -224,6 +225,13 @@ func run() (runErr error) {
 
 	// Start Bot (Polling or Webhook)
 	if cfg.UsePolling {
+		// Clear webhook before polling to avoid conflicts
+		if ok, err := b.DeleteWebhook(nil); err != nil {
+			log.Printf("Warning: Failed to delete webhook before polling: %v", err)
+		} else if ok {
+			log.Printf("Successfully deleted existing webhook before starting polling.")
+		}
+
 		go func() {
 			for {
 				err := updater.StartPolling(b, &ext.PollingOpts{
@@ -251,10 +259,10 @@ func run() (runErr error) {
 		log.Printf("Bot started using Polling: @%s", b.User.Username)
 	} else {
 		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
-		webhookPath := "/tg-webhook/" + cfg.TelegramToken
+		webhookPath := "/bot" + cfg.TelegramToken
 		fullWebhookURL := webhookBase + webhookPath
-		
-		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(webhookPath))
+
+		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(""))
 		log.Printf("Registered local Telegram webhook handler for %s", webhookPath)
 
 		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{

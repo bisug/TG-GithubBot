@@ -134,8 +134,8 @@ func repoPageNav(page int, resp *gh.Response) []gotgbot.InlineKeyboardButton {
 }
 
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can change settings", ShowAlert: true})
+	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "⚠️ Permission Denied: This action is restricted to group administrators.", ShowAlert: true})
 		return nil
 	}
 
@@ -771,8 +771,8 @@ func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.Inline
 }
 
 func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can perform PR actions", ShowAlert: true})
+	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "⚠️ Permission Denied: This action is restricted to group administrators.", ShowAlert: true})
 		return nil
 	}
 

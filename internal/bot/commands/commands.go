@@ -182,8 +182,8 @@ func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboa
 }
 
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can add repositories.", nil)
+	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
+		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ <b>Permission Denied:</b> This command is restricted to group administrators.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -364,8 +364,8 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 }
 
 func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can modify settings.", nil)
+	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
+		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ <b>Permission Denied:</b> This command is restricted to group administrators.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -396,8 +396,8 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can remove repositories.", nil)
+	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
+		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ <b>Permission Denied:</b> This command is restricted to group administrators.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -524,24 +524,18 @@ func (h *CommandHandler) Reload(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	member, err := b.GetChatMember(ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, nil)
-	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to check permissions.", nil)
-		return nil
-	}
-
-	status := member.GetStatus()
-	isAdmin := status == "administrator" || status == "creator"
+	h.AdminCache.Delete(ctx.EffectiveChat.Id)
+	isAdmin := utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache)
 
 	if !isAdmin {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Only admins can reload the cache.", nil)
+		h.AdminCache.Delete(ctx.EffectiveChat.Id) // If they aren't admin, we shouldn't cache the result that they aren't if it was a failure, but IsAdmin now caches.
+		// Actually, if IsAdmin fetched and they aren't in the list, they aren't admin.
+		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ <b>Permission Denied:</b> This command is restricted to group administrators.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
-
-	h.AdminCache.Delete(ctx.EffectiveChat.Id)
 	expiry := time.Now().Add(10 * time.Minute)
 	h.ReloadRateLimit.Set(ctx.EffectiveChat.Id, expiry, 10*time.Minute)
-	_, err = ctx.EffectiveMessage.Reply(b, "Admin cache reloaded.", nil)
+	_, err := ctx.EffectiveMessage.Reply(b, "Admin cache reloaded.", nil)
 	return err
 }
 
