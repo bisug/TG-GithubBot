@@ -643,17 +643,30 @@ func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.Inline
 	}
 
 	msg := fmt.Sprintf(
-		"%s *%s workflow*\n\n"+
-			"*Status:* %s\n"+
-			"*Repository:* %s\n"+
+		"%s *Workflow Run %s in* %s\n\n"+
+			"*Workflow:* `%s`\n"+
+			"*Status:* `%s`\n"+
 			"*By:* %s",
 		statusEmoji,
+		EscapeMarkdownV2(titleText(conclusion)),
+		FormatRepo(repo),
 		EscapeMarkdownV2(workflow),
 		EscapeMarkdownV2(statusLabel),
-		FormatRepo(repo),
 		FormatUser(sender),
 	)
-	return FormatMessageWithButton(msg, "View Run", run.GetHTMLURL())
+	if conclusion == "" {
+		msg = fmt.Sprintf(
+			"%s *Workflow Run %s in* %s\n\n"+
+				"*Workflow:* `%s`\n"+
+				"*By:* %s",
+			statusEmoji,
+			EscapeMarkdownV2(statusLabel),
+			FormatRepo(repo),
+			EscapeMarkdownV2(workflow),
+			FormatUser(sender),
+		)
+	}
+	return FormatMessageWithButton(msg, "View Workflow Run", run.GetHTMLURL())
 }
 
 func FormatWorkflowJobEvent(e *github.WorkflowJobEvent) (string, *gotgbot.InlineKeyboardMarkup) {
@@ -1979,15 +1992,15 @@ func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotgbot.Inli
 	var msg string
 	switch action {
 	case "created":
-		msg = "🎉 *New installation*\\! Welcome aboard\\! 🎉\n\n"
-		msg += "This bot will now post updates from the repositories you've granted access to\\.\n\n"
-		msg += fmt.Sprintf("Installation by %s\\.", FormatUser(sender))
+		msg = "🎉 *Bot Installed Successfully*\\!\n\n"
+		msg += "I am now linked to your account and will monitor your repositories for updates\\.\n\n"
+		msg += fmt.Sprintf("👤 *By:* %s", FormatUser(sender))
 	case "deleted":
-		msg = "🗑️ *Installation uninstalled*\\! Goodbye\\! 👋\n\n"
-		msg += "This bot will no longer post updates\\.\n\n"
-		msg += fmt.Sprintf("Uninstalled by %s\\.", FormatUser(sender))
+		msg = "🗑️ *Bot Uninstalled*\n\n"
+		msg += "I have been removed from your account and will no longer send notifications\\.\n\n"
+		msg += fmt.Sprintf("👤 *By:* %s", FormatUser(sender))
 	default:
-		msg = fmt.Sprintf("🤖 *Unknown installation action:* `%s`", EscapeMarkdownV2(action))
+		msg = fmt.Sprintf("🤖 *Installation Update:* `%s`", EscapeMarkdownV2(action))
 	}
 
 	return msg, nil
