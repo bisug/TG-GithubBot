@@ -225,6 +225,13 @@ func run() (runErr error) {
 
 	// Start Bot (Polling or Webhook)
 	if cfg.UsePolling {
+		// Clear webhook before polling to avoid conflicts
+		if ok, err := b.DeleteWebhook(nil); err != nil {
+			log.Printf("Warning: Failed to delete webhook before polling: %v", err)
+		} else if ok {
+			log.Printf("Successfully deleted existing webhook before starting polling.")
+		}
+
 		go func() {
 			for {
 				err := updater.StartPolling(b, &ext.PollingOpts{
