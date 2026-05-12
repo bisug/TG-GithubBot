@@ -224,11 +224,12 @@ func run() (runErr error) {
 
 	// Start Bot (Polling or Webhook)
 	if cfg.TelegramWebhookURL != "" {
-		// Normalize URL and define unique path
 		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
 		webhookPath := "/tg-webhook/" + cfg.TelegramToken
+		fullWebhookURL := webhookBase + webhookPath
 		
 		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(webhookPath))
+		log.Printf("Registered local handler for %s", webhookPath)
 
 		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
 			MaxConnections:     100,
@@ -242,7 +243,7 @@ func run() (runErr error) {
 				}
 			}()
 		} else {
-			log.Printf("Bot started using Webhooks at %s", webhookBase+webhookPath)
+			log.Printf("✅ Bot successfully registered Webhook at Telegram: %s", fullWebhookURL)
 		}
 	} else {
 		if err := updater.StartPolling(b, &ext.PollingOpts{
