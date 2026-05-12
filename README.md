@@ -20,68 +20,26 @@ TG-GithubBot is a Telegram bot that connects Telegram chats to GitHub repositori
 
 ## How It Works
 
-1. The bot runs a Telegram polling loop.
-2. The same process also exposes an HTTP server.
-3. GitHub OAuth redirects to:
+This bot uses a flexible, platform-agnostic architecture:
 
-   ```text
-   https://your-domain.com/oauth/callback
-   ```
+- **Telegram Commands**: The bot can receive commands via **Webhooks** (recommended for production VPS) or **Long Polling** (recommended for Cloud Web Services like Render/Heroku or local development). Switch modes using the `USE_POLLING` environment variable.
+- **GitHub Activity**: Repository notifications are received via **Webhooks** for maximum performance.
+- **Security**: All GitHub payloads are validated with a cryptographic signature (`GITHUB_WEBHOOK_SECRET`).
 
-4. GitHub repository webhooks post to:
+The `TELEGRAM_WEBHOOK_URL` is the public base URL used for GitHub OAuth, GitHub Webhooks, and (optionally) Telegram Webhooks.
 
-   ```text
-   https://your-domain.com/webhook/<encrypted-chat-token>
-   ```
-
-5. The bot validates GitHub webhook signatures, formats events, and sends them to the linked Telegram chat.
-
-The bot does not need a Telegram webhook. `TELEGRAM_WEBHOOK_URL` is the public base URL for GitHub OAuth callbacks and GitHub webhooks.
+> [!IMPORTANT]
+> When `USE_POLLING=false` (default), the bot automatically registers its webhook with Telegram at startup. If you switch from Webhook to Polling mode, you may need to manually delete the webhook via the Telegram API if updates stop arriving.
 
 ## Supported GitHub Events
 
-New repository webhooks are created with GitHub's wildcard subscription (`*`) so GitHub sends every event valid for that repository webhook.
+The bot supports a wide range of repository events. For a full technical list of compatible events, see the `internal/github/format.go` file. Common events include:
 
-The bot currently exposes and parses the event types supported by `go-github v85`, including:
-
-- Branch protection events
-- Check run and check suite events
-- Code scanning alerts
-- Commit comments
-- Create and delete events
-- Dependabot alerts
-- Deploy keys
-- Deployments, deployment statuses, deployment reviews, and deployment protection rules
-- Discussions and discussion comments
-- Forks
-- GitHub App authorization events
-- Wiki events
-- Installation events
-- Issue comments
-- Issues
-- Labels
-- Marketplace purchase events
-- Members and memberships
-- Merge groups
-- Milestones
-- Organization events
-- Packages and registry packages
-- Page builds
-- Projects v2 and project item events
-- Pull requests
-- Pull request reviews, review comments, and review threads
-- Pushes
-- Releases
-- Repository changes, dispatches, imports, rulesets, and vulnerability alerts
-- Secret scanning alerts
-- Security advisories
-- Sponsorships
-- Stars and watches
-- Commit statuses
-- Teams and team repository access
-- Workflow dispatches, workflow jobs, and workflow runs
-
-Some event types only apply to organization, enterprise, marketplace, or GitHub App webhooks. GitHub decides which wildcard events are valid for the repository webhook that this bot creates.
+- **Push / Commit Activity**
+- **Pull Requests** (Open, Close, Review, Approve)
+- **Issues** (Open, Close, Comment)
+- **Workflow Runs** (CI/CD Success/Failure)
+- **Discussions** and **Releases**
 
 ## Requirements
 
@@ -149,13 +107,11 @@ GITHUB_CLIENT_SECRET=...
 
 The bot requests these OAuth scopes:
 
-```text
-repo
-admin:repo_hook
-read:user
-```
-
-These are needed so a connected user can list repositories, create/delete repository webhooks, and perform issue/PR actions.
+| Scope | Rationale |
+| :--- | :--- |
+| `repo` | Full control of private/public repos. Required to create/delete repository webhooks and perform PR actions (Merge/Approve). |
+| `admin:repo_hook` | Required to programmatically manage the webhooks that send notifications to Telegram. |
+| `read:user` | Used to identify the GitHub user and link their account to their Telegram ID. |
 
 ## Environment Variables
 
@@ -184,19 +140,18 @@ TELEGRAM_WEBHOOK_URL=https://your-domain.com
 GITHUB_CLIENT_ID=Iv1...
 GITHUB_CLIENT_SECRET=...
 
-# Secret used to validate GitHub webhook payloads
-GITHUB_WEBHOOK_SECRET=change_me_to_a_random_secret
-
-# MongoDB connection
-MONGODB_URI=mongodb://mongo:27017
-DATABASE_NAME=github_bot
-
-# 64 hex characters, generated from 32 random bytes
-ENCRYPTION_KEY=...
-
-# HTTP server port inside the container
+# HTTP server port (Use 10000 for Render, 8080 for Standard/Docker)
 PORT=8080
+
+# (Optional) Set to true for Polling (Best for Cloud/Local). Default: false (Webhooks)
+USE_POLLING=false
+
+# MongoDB database name
+DATABASE_NAME=github_bot
 ```
+
+> [!CAUTION]
+> **Security Warning**: `GITHUB_WEBHOOK_SECRET` must be a strong, random string. If left as default, unauthorized parties could inject fake GitHub activity into your Telegram chats.
 
 Generate secure secrets:
 
@@ -423,10 +378,10 @@ Existing linked repositories keep their current GitHub webhook event settings. T
 ## Permissions And Access Model
 
 - `/connect` must be used in private chat.
-- In groups, only Telegram admins can add/remove repositories or change settings.
+- In groups, only Telegram admins with the **"Change Group Info"** permission can add/remove repositories or change settings.
 - The GitHub user running `/addrepo` must have permission to create repository webhooks.
 - Reply actions use the GitHub token of the Telegram user who sends the reply or command.
-- OAuth tokens are encrypted with AES-GCM before being stored in MongoDB.
+- OAuth tokens are encrypted with AES-GCM (256-bit) before being stored in MongoDB.
 
 ## Updating The Bot
 
@@ -443,159 +398,43 @@ Watch logs:
 docker compose logs -f github-bot
 ```
 
-## Deploy On Render Free Web Service
+## Deploy On Cloud Web Services (Render, Heroku, Railway, etc.)
 
-Render can host the bot as a free Web Service, but Render does not run `docker-compose.yml` for a Web Service and the free web service filesystem is ephemeral. Use an external MongoDB database such as MongoDB Atlas Free instead of the Compose MongoDB container.
+Cloud platforms can host the bot as a **Web Service**. Because these platforms typically have ephemeral filesystems and may spin down during idle time, follow these universal steps for a stable deployment.
 
-Free Render services also spin down after idle time. That is acceptable for testing, but the first GitHub webhook or OAuth callback after spin-down can be delayed while the service wakes up.
+### 1. External MongoDB Requirement
+Cloud web services do not persist local files. You **must** use an external MongoDB database:
+- **MongoDB Atlas**: Recommended (has a generous free tier).
+- **Railway/Heroku Add-ons**: You can also use managed MongoDB add-ons provided by your platform.
 
-### 1. Create A Free MongoDB Atlas Database
+Use the connection string as your `MONGODB_URI`.
 
-1. Create a MongoDB Atlas account.
-2. Create a free M0 cluster.
-3. Create a database user.
-4. Add a network access rule.
-   - For the simplest Render test deployment, allow access from anywhere: `0.0.0.0/0`.
-   - For production, restrict database access as tightly as your hosting setup allows.
-5. Copy the connection string.
+### 2. Environment Variables
+Configure these variables in your platform's dashboard:
 
-It should look similar to:
+| Variable | Description |
+| :--- | :--- |
+| `PORT` | Set to `10000` (Render) or `8080` (Standard). Most platforms provide this automatically. |
+| `USE_POLLING` | Set to `true` for maximum reliability on free tiers. |
+| `TELEGRAM_TOKEN` | Your bot token from @BotFather. |
+| `TELEGRAM_WEBHOOK_URL` | The public URL of your service (e.g., `https://my-bot.herokapp.com`). |
+| `GITHUB_CLIENT_ID` | From your GitHub OAuth App. |
+| `GITHUB_CLIENT_SECRET` | From your GitHub OAuth App. |
+| `GITHUB_WEBHOOK_SECRET` | A random secret for payload validation. |
+| `ENCRYPTION_KEY` | 64 hex characters (32 bytes) for token security. |
+| `MONGODB_URI` | Your external database connection string. |
 
-```text
-mongodb+srv://USERNAME:PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-```
+### 3. The Polling Advantage
+On cloud platforms (especially free tiers), setting `USE_POLLING=true` is highly recommended. It bypasses complex networking issues and ensures the bot starts receiving commands the moment the container wakes up.
 
-Use this value as `MONGODB_URI`.
+### 4. GitHub OAuth Setup
+Update your GitHub OAuth App's **Authorization callback URL** to match your public service URL:
+`https://your-service-url.com/oauth/callback`
 
-### 2. Push This Repository To GitHub
-
-Render deploys from a Git provider or from a public Git URL. Commit and push your changes first:
-
-```bash
-git add .
-git commit -m "Prepare Render deployment"
-git push
-```
-
-### 3. Create The Render Web Service
-
-Recommended path:
-
-1. Open the Render Dashboard.
-2. Click **New**.
-3. Select **Blueprint** if you want Render to use the included [render.yaml](render.yaml).
-4. Select this repository.
-5. Review the service named `tg-githubbot`.
-6. Enter the required secret environment variables when Render asks for them.
-7. Deploy.
-
-Manual path:
-
-1. Open the Render Dashboard.
-2. Click **New**.
-3. Select **Web Service**.
-4. Connect this GitHub repository.
-5. Set **Language** to **Docker**.
-6. Select the **Free** instance type.
-7. Set the health check path to `/`.
-8. Add the environment variables below.
-9. Deploy.
-
-### 4. Render Environment Variables
-
-Set these in Render:
-
-```dotenv
-PORT=10000
-DATABASE_NAME=github_bot
-TELEGRAM_TOKEN=123456:ABC-DEF...
-TELEGRAM_WEBHOOK_URL=https://your-render-service-name.onrender.com
-GITHUB_CLIENT_ID=Iv1...
-GITHUB_CLIENT_SECRET=...
-GITHUB_WEBHOOK_SECRET=...
-ENCRYPTION_KEY=...
-MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-```
-
-Generate `ENCRYPTION_KEY` and `GITHUB_WEBHOOK_SECRET` locally:
-
-```bash
-openssl rand -hex 32
-```
-
-Use one generated value for `ENCRYPTION_KEY` and a different generated value for `GITHUB_WEBHOOK_SECRET`.
-
-Important:
-
-- `PORT` should be `10000` on Render.
-- `TELEGRAM_WEBHOOK_URL` must be the public Render URL with no trailing slash.
-- `MONGODB_URI` must point to MongoDB Atlas or another external MongoDB server.
-- Keep `ENCRYPTION_KEY` stable. Changing it breaks stored OAuth tokens and webhook routing tokens.
-
-### 5. Update The GitHub OAuth App
-
-After Render gives you the service URL, update your GitHub OAuth App:
-
-```text
-Homepage URL: https://your-render-service-name.onrender.com
-Authorization callback URL: https://your-render-service-name.onrender.com/oauth/callback
-```
-
-Also make sure Render has:
-
-```dotenv
-TELEGRAM_WEBHOOK_URL=https://your-render-service-name.onrender.com
-```
-
-Redeploy the Render service after changing environment variables.
-
-### 6. Verify The Render Deployment
-
-Open:
-
-```text
-https://your-render-service-name.onrender.com
-```
-
-You should see the bot health page.
-
-Then check Render logs. You should see startup lines similar to:
-
-```text
-Bot started: @your_bot_username
-Server listening on port 10000
-```
-
-### 7. Connect And Add A Repository
-
-In Telegram:
-
-```text
-/start
-/connect
-```
-
-After GitHub OAuth succeeds, add a repository in the target chat:
-
-```text
-/addrepo owner/repo
-```
-
-GitHub should create a webhook pointing to:
-
-```text
-https://your-render-service-name.onrender.com/webhook/<encrypted-chat-token>
-```
-
-### Render Free Limitations
-
-- The bot can sleep after idle time.
-- The first request after sleep can be slow.
-- Do not store MongoDB data on the Render web service filesystem.
-- Free web services are best for testing or hobby use, not production reliability.
-- If the bot is asleep, Telegram polling is also stopped until an HTTP request wakes the service.
-
-To wake it manually, open the Render URL in a browser.
+#### Summary for Cloud Users
+- **Stay Awake**: Free tiers may sleep. Accessing the public URL or receiving a GitHub event will wake the bot.
+- **Stable Encryption**: Never change your `ENCRYPTION_KEY` after deployment, or you will lose access to stored GitHub tokens.
+- **Webhook Paths**: GitHub webhooks will be created automatically at `https://your-service.com/webhook/<token>`.
 
 ## Backups
 

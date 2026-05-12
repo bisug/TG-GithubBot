@@ -20,10 +20,13 @@ type Config struct {
 	GitHubClientSecret  string
 	Port                string
 	EncryptionKey       string
+	UsePolling          bool
 }
 
 func Load() *Config {
 	_ = godotenv.Load()
+
+	usePolling := strings.ToLower(os.Getenv("USE_POLLING")) == "true"
 
 	required := []string{
 		"TELEGRAM_TOKEN",
@@ -61,6 +64,7 @@ func Load() *Config {
 		GitHubClientSecret:  strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET")),
 		Port:                getEnv("PORT", "8080"),
 		EncryptionKey:       encryptionKey,
+		UsePolling:          usePolling,
 	}
 }
 

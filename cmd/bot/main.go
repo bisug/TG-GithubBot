@@ -222,33 +222,56 @@ func run() (runErr error) {
 		serverErr <- nil
 	}()
 
-	// Use Polling by default on Render Free Tier for higher reliability
-	// We'll ignore 'terminated by other getUpdates request' errors as they are expected during deployment
-	go func() {
-		for {
-			err := updater.StartPolling(b, &ext.PollingOpts{
-				DropPendingUpdates: true,
-				GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-					Timeout: 9,
-					RequestOpts: &gotgbot.RequestOpts{
-						Timeout: time.Second * 10,
+	// Start Bot (Polling or Webhook)
+	if cfg.UsePolling {
+		go func() {
+			for {
+				err := updater.StartPolling(b, &ext.PollingOpts{
+					DropPendingUpdates: true,
+					GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
+						Timeout: 9,
+						RequestOpts: &gotgbot.RequestOpts{
+							Timeout: time.Second * 10,
+						},
 					},
-				},
-			})
-			if err != nil {
-				if strings.Contains(err.Error(), "terminated by other getUpdates request") {
-					log.Printf("Polling conflict detected (expected during deploy), retrying in 2s...")
-					time.Sleep(2 * time.Second)
+				})
+				if err != nil {
+					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
+						log.Printf("Polling conflict detected (expected during deploy), retrying in 2s...")
+						time.Sleep(2 * time.Second)
+						continue
+					}
+					log.Printf("Polling failed: %v. Retrying in 5s...", err)
+					time.Sleep(5 * time.Second)
 					continue
 				}
-				log.Printf("Polling failed: %v. Retrying in 5s...", err)
-				time.Sleep(5 * time.Second)
-				continue
+				break
 			}
-			break
+		}()
+		log.Printf("Bot started using Polling: @%s", b.User.Username)
+	} else {
+		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
+		webhookPath := "/tg-webhook/" + cfg.TelegramToken
+		fullWebhookURL := webhookBase + webhookPath
+		
+		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(webhookPath))
+		log.Printf("Registered local Telegram webhook handler for %s", webhookPath)
+
+		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
+			MaxConnections:     100,
+			DropPendingUpdates: true,
+		})
+		if err != nil {
+			log.Printf("ERROR: Failed to set Telegram webhook: %v. Falling back to polling...", err)
+			go func() {
+				if err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true}); err != nil {
+					log.Printf("FATAL: Polling fallback failed: %v", err)
+				}
+			}()
+		} else {
+			log.Printf("✅ Bot successfully registered Webhook at Telegram: %s", fullWebhookURL)
 		}
-	}()
-	log.Printf("Bot started using Polling: @%s", b.User.Username)
+	}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
