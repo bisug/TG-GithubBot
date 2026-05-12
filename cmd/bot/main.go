@@ -222,26 +222,49 @@ func run() (runErr error) {
 		serverErr <- nil
 	}()
 
-	if err := updater.StartPolling(b, &ext.PollingOpts{
-		DropPendingUpdates: true,
-		GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-			Timeout: 9,
-			RequestOpts: &gotgbot.RequestOpts{
-				Timeout: time.Second * 10,
-			},
-		},
-	}); err != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		shutdownErr := shutdown(shutdownCtx, server, updater, database)
-		databaseClosed = true
-		if shutdownErr != nil {
-			return errors.Join(fmt.Errorf("start polling: %w", err), fmt.Errorf("shutdown after polling failure: %w", shutdownErr))
-		}
-		return fmt.Errorf("start polling: %w", err)
-	}
+	// Start Bot (Polling or Webhook)
+	if cfg.TelegramWebhookURL != "" {
+		// Normalize URL and define unique path
+		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
+		webhookPath := "/tg-webhook/" + cfg.TelegramToken
+		
+		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(webhookPath))
 
-	log.Printf("Bot started: @%s", b.User.Username)
+		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
+			MaxConnections:     100,
+			DropPendingUpdates: true,
+		})
+		if err != nil {
+			log.Printf("ERROR: Failed to set Telegram webhook: %v. Falling back to polling...", err)
+			go func() {
+				if err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true}); err != nil {
+					log.Printf("FATAL: Polling fallback failed: %v", err)
+				}
+			}()
+		} else {
+			log.Printf("Bot started using Webhooks at %s", webhookBase+webhookPath)
+		}
+	} else {
+		if err := updater.StartPolling(b, &ext.PollingOpts{
+			DropPendingUpdates: true,
+			GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
+				Timeout: 9,
+				RequestOpts: &gotgbot.RequestOpts{
+					Timeout: time.Second * 10,
+				},
+			},
+		}); err != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			shutdownErr := shutdown(shutdownCtx, server, updater, database)
+			databaseClosed = true
+			if shutdownErr != nil {
+				return errors.Join(fmt.Errorf("start polling: %w", err), fmt.Errorf("shutdown after polling failure: %w", shutdownErr))
+			}
+			return fmt.Errorf("start polling: %w", err)
+		}
+		log.Printf("Bot started using Polling: @%s", b.User.Username)
+	}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
