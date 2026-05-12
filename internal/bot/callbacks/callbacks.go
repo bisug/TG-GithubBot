@@ -470,6 +470,16 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	hook.Events = newEvents
+	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
+	if encErr != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error repairing webhook URL.", ShowAlert: true})
+		return nil
+	}
+	hook.Config = &gh.HookConfig{
+		URL:         gh.String(fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)),
+		ContentType: gh.String("json"),
+		Secret:      gh.String(h.Config.GitHubWebhookSecret),
+	}
 	_, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook)
 	if editErr != nil {
 		if h.handleAuthError(b, ctx, editErr) {
@@ -484,12 +494,12 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>push events only</b>."
 	}
 
-	if err := github.TriggerRepositoryHookTest(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
-		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", l.RepoFullName, l.WebhookID, err)
-		responseText += fmt.Sprintf("\n\n⚠️ GitHub test delivery failed: %s", html.EscapeString(err.Error()))
+	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
+		log.Printf("Webhook ping delivery failed for %s hook_id=%d: %v", l.RepoFullName, l.WebhookID, err)
+		responseText += fmt.Sprintf("\n\n⚠️ GitHub ping delivery failed: %s", html.EscapeString(err.Error()))
 	} else {
-		log.Printf("Webhook test delivery requested for %s hook_id=%d", l.RepoFullName, l.WebhookID)
-		responseText += "\n\nGitHub test delivery requested. You should receive a test notification shortly."
+		log.Printf("Webhook ping delivery requested for %s hook_id=%d", l.RepoFullName, l.WebhookID)
+		responseText += "\n\nWebhook URL and secret repaired. GitHub ping delivery requested; you should receive a ping notification shortly."
 	}
 
 	kb := [][]gotgbot.InlineKeyboardButton{
