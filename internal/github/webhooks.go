@@ -66,7 +66,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chatID == 0 {
-		log.Printf("Webhook rejected: invalid token event=%s delivery=%s hook_id=%s remote=%s", eventType, deliveryID, hookIDHeader, r.RemoteAddr)
+		log.Printf("Webhook rejected: invalid token event=%s delivery=%s hook_id=%s remote=%s path=%s", eventType, deliveryID, hookIDHeader, r.RemoteAddr, r.URL.Path)
 		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
