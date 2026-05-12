@@ -949,7 +949,12 @@ func FormatPingEvent(e *github.PingEvent) (string, *gotgbot.InlineKeyboardMarkup
 		msg += fmt.Sprintf("🏢 *Org:* %s", EscapeMarkdownV2(*e.Org.Login))
 	}
 
-	return msg, nil
+	buttonURL := "https://github.com"
+	if e.Repo != nil && e.Repo.HTMLURL != nil {
+		buttonURL = *e.Repo.HTMLURL
+	}
+
+	return FormatMessageWithButton(msg, "View GitHub", buttonURL)
 }
 
 func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotgbot.InlineKeyboardMarkup) {
