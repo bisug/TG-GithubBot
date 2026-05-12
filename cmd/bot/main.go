@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github-webhook/internal/bot/middleware"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github-webhook/internal/bot/callbacks"
@@ -26,11 +31,34 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("Application stopped: %v", err)
+	}
+}
+
+func run() (runErr error) {
 	cfg := config.Load()
 	database, err := db.Connect(cfg)
 	if err != nil {
-		log.Fatalf("Failed to connect to DB: %v", err)
+		return fmt.Errorf("connect to DB: %w", err)
 	}
+	databaseClosed := false
+	defer func() {
+		if databaseClosed {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := database.Client.Disconnect(ctx); err != nil {
+			if runErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("disconnect database: %w", err))
+				return
+			}
+			runErr = fmt.Errorf("disconnect database: %w", err)
+		}
+	}()
 
 	oauth := github.NewOAuth(cfg)
 	clientFactory := github.NewClientFactory()
@@ -42,7 +70,7 @@ func main() {
 
 	b, err := gotgbot.NewBot(cfg.TelegramToken, nil)
 	if err != nil {
-		log.Fatalf("Failed to create bot: %v", err)
+		return fmt.Errorf("create bot: %w", err)
 	}
 
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
@@ -91,24 +119,8 @@ func main() {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("c:"), cbHandler.HandleSettings))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("act:"), cbHandler.HandlePRAction))
 
-	go func() {
-		err = updater.StartPolling(b, &ext.PollingOpts{
-			DropPendingUpdates: true,
-			GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-				Timeout: 9,
-				RequestOpts: &gotgbot.RequestOpts{
-					Timeout: time.Second * 10,
-				},
-			},
-		})
-		if err != nil {
-			log.Fatalf("Failed to start polling: %v", err)
-		}
-	}()
-
-	log.Printf("Bot started: @%s", b.User.Username)
-
-	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		html := fmt.Sprintf(`
 		<html>
 		<head><title>GitHub Webhook Bot</title></head>
@@ -123,8 +135,8 @@ func main() {
 	})
 
 	webhookHandler := github.NewWebhookServer(cfg, database, b, contextCache, actionCache).Handler
-	http.HandleFunc("/webhook/", webhookHandler)
-	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/webhook/", webhookHandler)
+	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 
@@ -191,10 +203,95 @@ func main() {
 		_, _ = w.Write([]byte(html))
 	})
 
-	log.Printf("Server listening on port %s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	listener, err := net.Listen("tcp", ":"+cfg.Port)
+	if err != nil {
+		return fmt.Errorf("listen on port %s: %w", cfg.Port, err)
 	}
+
+	server := &http.Server{
+		Handler: mux,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Printf("Server listening on port %s", cfg.Port)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	if err := updater.StartPolling(b, &ext.PollingOpts{
+		DropPendingUpdates: true,
+		GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
+			Timeout: 9,
+			RequestOpts: &gotgbot.RequestOpts{
+				Timeout: time.Second * 10,
+			},
+		},
+	}); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		shutdownErr := shutdown(shutdownCtx, server, updater, database)
+		databaseClosed = true
+		if shutdownErr != nil {
+			return errors.Join(fmt.Errorf("start polling: %w", err), fmt.Errorf("shutdown after polling failure: %w", shutdownErr))
+		}
+		return fmt.Errorf("start polling: %w", err)
+	}
+
+	log.Printf("Bot started: @%s", b.User.Username)
+
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	select {
+	case <-signalCtx.Done():
+		log.Printf("Shutdown signal received")
+	case err := <-serverErr:
+		if err != nil {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			shutdownErr := shutdown(shutdownCtx, server, updater, database)
+			databaseClosed = true
+			if shutdownErr != nil {
+				return errors.Join(fmt.Errorf("server failed: %w", err), fmt.Errorf("shutdown after server failure: %w", shutdownErr))
+			}
+			return fmt.Errorf("server failed: %w", err)
+		}
+		log.Printf("Server stopped")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	err = shutdown(shutdownCtx, server, updater, database)
+	databaseClosed = true
+	if err != nil {
+		return fmt.Errorf("shutdown: %w", err)
+	}
+
+	log.Printf("Shutdown complete")
+	return nil
+}
+
+func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, database *db.DB) error {
+	var errs []error
+
+	if err := updater.Stop(); err != nil {
+		errs = append(errs, fmt.Errorf("stop updater: %w", err))
+	}
+
+	if err := server.Shutdown(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("shutdown server: %w", err))
+	}
+
+	if err := database.Client.Disconnect(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("disconnect database: %w", err))
+	}
+
+	return errors.Join(errs...)
 }
 
 func resolveOAuthState(state string, stateCache *cache.Cache[string, int64], encryptionKey string) (int64, error) {
