@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -74,9 +75,15 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
-		log.Printf("Webhook rejected: signature validation failed event=%s delivery=%s hook_id=%s chat=%d error=%v", eventType, deliveryID, hookIDHeader, chatID, err)
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
-		return
+		if s.Config.GitHubWebhookSecret == "" {
+			log.Printf("Webhook Warning: No GITHUB_WEBHOOK_SECRET configured. Validation skipped. event=%s chat=%d", eventType, chatID)
+			body, _ := io.ReadAll(r.Body)
+			payload = body
+		} else {
+			log.Printf("Webhook REJECTED: Signature mismatch. This means the secret in GitHub doesn't match GITHUB_WEBHOOK_SECRET on Render. event=%s delivery=%s chat=%d error=%v", eventType, deliveryID, chatID, err)
+			http.Error(w, "Invalid signature", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	event, err := github.ParseWebHook(eventType, payload)
