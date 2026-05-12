@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"strconv"
 	"strings"
@@ -483,6 +484,14 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>push events only</b>."
 	}
 
+	if err := github.TriggerRepositoryHookTest(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
+		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", l.RepoFullName, l.WebhookID, err)
+		responseText += fmt.Sprintf("\n\n⚠️ GitHub test delivery failed: %s", html.EscapeString(err.Error()))
+	} else {
+		log.Printf("Webhook test delivery requested for %s hook_id=%d", l.RepoFullName, l.WebhookID)
+		responseText += "\n\nGitHub test delivery requested. You should receive a test notification shortly."
+	}
+
 	kb := [][]gotgbot.InlineKeyboardButton{
 		{
 			ui.Callback("Back", cbRepo(cbRepoMenu, l),
@@ -731,7 +740,16 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		return nil
 	}
 
+	testMsg := " GitHub test delivery requested; you should receive a test notification shortly."
+	if err := github.TriggerRepositoryHookTest(context.Background(), client, repo.GetOwner().GetLogin(), repo.GetName(), webhookID); err != nil {
+		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", repo.GetFullName(), webhookID, err)
+		testMsg = fmt.Sprintf(" Linked successfully, but GitHub test delivery failed: %s", html.EscapeString(err.Error()))
+	} else {
+		log.Printf("Webhook test delivery requested for %s hook_id=%d", repo.GetFullName(), webhookID)
+	}
+
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName())
+	msg += testMsg
 	_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
 	return err
 }

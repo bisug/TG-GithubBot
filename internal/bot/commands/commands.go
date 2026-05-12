@@ -291,7 +291,16 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
+	testMsg := " I asked GitHub to send a test webhook, so you should receive a test notification shortly."
+	if err := gh.TriggerRepositoryHookTest(context.Background(), client, owner, repo, webhookID); err != nil {
+		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", repoFullName, webhookID, err)
+		testMsg = fmt.Sprintf(" Linked successfully, but GitHub test delivery failed: %s", html.EscapeString(err.Error()))
+	} else {
+		log.Printf("Webhook test delivery requested for %s hook_id=%d", repoFullName, webhookID)
+	}
+
 	msg := fmt.Sprintf("Repository <b>%s</b> linked successfully!", repoFullName)
+	msg += testMsg
 	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
 }

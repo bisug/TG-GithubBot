@@ -41,10 +41,12 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 }
 
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
-	//log.Printf("Received webhook request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 	// Path: /webhook/<token>
 	receivedAt := time.Now()
 	var chatID int64
+	eventType := github.WebHookType(r)
+	deliveryID := r.Header.Get("X-GitHub-Delivery")
+	hookIDHeader := r.Header.Get("X-GitHub-Hook-ID")
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
 		token := path[9:] // strip "/webhook/"
@@ -63,33 +65,41 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chatID == 0 {
-		log.Printf("Error: Valid webhook token required.")
+		log.Printf("Webhook rejected: invalid token event=%s delivery=%s hook_id=%s remote=%s", eventType, deliveryID, hookIDHeader, r.RemoteAddr)
 		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
 
+	log.Printf("Webhook received event=%s delivery=%s hook_id=%s chat=%d remote=%s", eventType, deliveryID, hookIDHeader, chatID, r.RemoteAddr)
+
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
-		log.Printf("Error: Webhook signature validation failed. Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v", err)
+		log.Printf("Webhook rejected: signature validation failed event=%s delivery=%s hook_id=%s chat=%d error=%v", eventType, deliveryID, hookIDHeader, chatID, err)
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return
 	}
 
-	eventType := github.WebHookType(r)
 	event, err := github.ParseWebHook(eventType, payload)
 	if err != nil {
-		log.Printf("Error: Webhook parsing failed: %v", err)
+		log.Printf("Webhook rejected: parse failed event=%s delivery=%s hook_id=%s chat=%d error=%v", eventType, deliveryID, hookIDHeader, chatID, err)
 		http.Error(w, "Parse error", http.StatusInternalServerError)
 		return
 	}
 
 	var hookID int64
-	if idStr := r.Header.Get("X-GitHub-Hook-ID"); idStr != "" {
+	if idStr := hookIDHeader; idStr != "" {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
 
-	deliveryID := r.Header.Get("X-GitHub-Delivery")
-	go s.processEvent(event, chatID, hookID, eventType, deliveryID, receivedAt)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("Webhook processing panic event=%s delivery=%s hook_id=%d chat=%d elapsed=%s panic=%v", eventType, deliveryID, hookID, chatID, time.Since(receivedAt).Round(time.Millisecond), recovered)
+			}
+		}()
+
+		s.processEvent(event, chatID, hookID, eventType, deliveryID, receivedAt)
+	}()
 	w.WriteHeader(http.StatusOK)
 }
 
