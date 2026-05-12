@@ -249,14 +249,6 @@ func run() (runErr error) {
 		}
 	}()
 	log.Printf("Bot started using Polling: @%s", b.User.Username)
-			databaseClosed = true
-			if shutdownErr != nil {
-				return errors.Join(fmt.Errorf("start polling: %w", err), fmt.Errorf("shutdown after polling failure: %w", shutdownErr))
-			}
-			return fmt.Errorf("start polling: %w", err)
-		}
-		log.Printf("Bot started using Polling: @%s", b.User.Username)
-	}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
