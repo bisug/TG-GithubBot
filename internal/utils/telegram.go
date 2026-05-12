@@ -2,7 +2,6 @@ package utils
 
 import (
 	"github-webhook/internal/cache"
-	"log"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -16,7 +15,6 @@ func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64, adminCache *cache.Cache
 					return true
 				}
 			}
-			log.Printf("Admin check: user %d is NOT in cached admin list for chat %d", userID, chatID)
 			return false
 		}
 	}
@@ -50,8 +48,6 @@ func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64, adminCache *cache.Cache
 			isAdmin = true
 		}
 	}
-
-	log.Printf("Admin check: chat %d has %d admins. User %d isAdmin=%v", chatID, len(adminIDs), userID, isAdmin)
 
 	if adminCache != nil {
 		adminCache.Set(chatID, adminIDs, 30*time.Minute)
