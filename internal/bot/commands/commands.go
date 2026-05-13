@@ -493,6 +493,7 @@ Visit the <a href="https://github.com/AshokShau/GithubBot">GitHub page</a> for m
 	return err
 }
 
+
 func (h *CommandHandler) Privacy(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := `<b>Privacy Policy</b>
 
