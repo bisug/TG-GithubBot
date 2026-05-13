@@ -1,18 +1,32 @@
+version: '3.8'
+
 services:
-  github-bot:
+  bot:
     build: .
-    restart: always
-    env_file: .env
+    container_name: tg_githubbot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - MONGODB_URI=mongodb://mongo:27017
+      - MONGODB_DB=${MONGODB_DB:-github_bot}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BASE_URL=${BASE_URL}
+      - PORT=8080
     depends_on:
       - mongo
-    ports:
-      - "${PORT:-8080}:${PORT:-8080}"
 
   mongo:
-    image: mongo:7
-    restart: always
+    image: mongo:latest
+    container_name: tg_githubbot_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
     volumes:
-      - mongo-data:/data/db
+      - mongodb_data:/data/db
 
 volumes:
-  mongo-data:
+  mongodb_data:

@@ -1,34 +1,36 @@
-# Build Stage
+# Build stage
 FROM golang:1.26.3-alpine AS builder
 
-# Install build dependencies
-RUN apk add --no-cache git ca-certificates
-
 WORKDIR /app
 
-# Cache dependencies
+# Install git and ca-certificates
+RUN apk add --no-cache git ca-certificates tzdata
+
+# Copy go mod and sum files
 COPY go.mod go.sum ./
+
+# Download all dependencies
 RUN go mod download
 
-# Copy source and build
+# Copy the source code
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o bot cmd/bot/main.go
 
-# Final Stage
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o tg-githubbot cmd/bot/main.go
+
+# Final stage
 FROM alpine:latest
-
-# Security: Run as non-root user
-RUN adduser -D -u 10001 botuser
 
 WORKDIR /app
 
-# Essential runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata
+# Copy the CA certificates from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy binary from builder
-COPY --from=builder /app/bot .
+# Copy the built binary
+COPY --from=builder /app/tg-githubbot .
 
-# Use non-root user
-USER botuser
+# Expose the webhook port (default 8080)
+EXPOSE 8080
 
-ENTRYPOINT ["./bot"]
+# Command to run the executable
+CMD ["./tg-githubbot"]

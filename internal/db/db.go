@@ -61,6 +61,13 @@ func (d *DB) createIndexes() error {
 		return err
 	}
 
+	_, err = d.Chats.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "links.webhook_id", Value: 1}},
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 

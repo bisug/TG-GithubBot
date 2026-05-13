@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github-webhook/internal/bot/middleware"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -31,6 +32,9 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	if err := run(); err != nil {
 		log.Fatalf("Application stopped: %v", err)
 	}
