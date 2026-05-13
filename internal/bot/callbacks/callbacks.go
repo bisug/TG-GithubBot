@@ -30,17 +30,28 @@ type CallbackHandler struct {
 	ClientFactory *github.ClientFactory
 	EncryptionKey string
 	ActionCache   *cache.Cache[string, models.PRActionContext]
-	AdminCache    *cache.Cache[int64, []int64]
 }
 
-func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64]) *CallbackHandler {
+func (h *CallbackHandler) getClient(b *gotgbot.Bot, ctx *ext.Context) (*gh.Client, error) {
+	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+	if err != nil {
+		msg := "Auth error."
+		if err.Error() == "unauthorized" {
+			msg = "Please /connect to GitHub first."
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: msg, ShowAlert: true})
+		return nil, err
+	}
+	return client, nil
+}
+
+func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, actionCache *cache.Cache[string, models.PRActionContext]) *CallbackHandler {
 	return &CallbackHandler{
 		Config:        cfg,
 		DB:            database,
 		ClientFactory: factory,
 		EncryptionKey: key,
 		ActionCache:   actionCache,
-		AdminCache:    adminCache,
 	}
 }
 
@@ -204,18 +215,10 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 				evt = shortEvt
 			}
 
-			user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-			if uErr != nil || user.EncryptedOAuthToken == "" {
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Please /connect to GitHub first.", ShowAlert: true})
+			client, err := h.getClient(b, ctx)
+			if err != nil {
 				return nil
 			}
-			token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-			if tErr != nil {
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error.", ShowAlert: true})
-				return nil
-			}
-
-			client := h.ClientFactory.GetUserClient(context.Background(), token)
 			repoParts := strings.Split(link.RepoFullName, "/")
 			if len(repoParts) != 2 {
 				return nil
@@ -367,27 +370,25 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 	warning := ""
 
 	if l.WebhookID != 0 {
-		user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-		if err != nil || user.EncryptedOAuthToken == "" {
-			warning = "\n\nWarning: your GitHub account is not connected, so the GitHub webhook could not be removed automatically."
-		} else {
-			token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-			if err != nil {
-				warning = "\n\nWarning: your GitHub token could not be decrypted, so the GitHub webhook was not removed automatically."
+		client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				warning = "\n\nWarning: your GitHub account is not connected, so the GitHub webhook could not be removed automatically."
 			} else {
-				parts := strings.Split(l.RepoFullName, "/")
-				if len(parts) == 2 {
-					client := h.ClientFactory.GetUserClient(context.Background(), token)
-					_, err = client.Repositories.DeleteHook(context.Background(), parts[0], parts[1], l.WebhookID)
-					if err != nil {
-						if h.handleAuthError(b, ctx, err) {
-							return nil
-						}
+				warning = "\n\nWarning: your GitHub token could not be decrypted, so the GitHub webhook was not removed automatically."
+			}
+		} else {
+			parts := strings.Split(l.RepoFullName, "/")
+			if len(parts) == 2 {
+				_, err = client.Repositories.DeleteHook(context.Background(), parts[0], parts[1], l.WebhookID)
+				if err != nil {
+					if h.handleAuthError(b, ctx, err) {
+						return nil
+					}
 
-						var errResp *gh.ErrorResponse
-						if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
-							warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %v", err)
-						}
+					var errResp *gh.ErrorResponse
+					if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
+						warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %v", err)
 					}
 				}
 			}
@@ -404,19 +405,10 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 }
 
 func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mode string) error {
-	user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if uErr != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Please /connect to GitHub first.", ShowAlert: true})
+	client, err := h.getClient(b, ctx)
+	if err != nil {
 		return nil
 	}
-
-	token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-	if tErr != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error.", ShowAlert: true})
-		return nil
-	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	repoParts := strings.Split(l.RepoFullName, "/")
 	if len(repoParts) != 2 {
 		return nil
@@ -484,7 +476,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		},
 	}
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
@@ -492,19 +484,15 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 }
 
 func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, page int) error {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Error: You must be connected to GitHub to view/edit settings.", nil)
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Auth error. Please reconnect.", nil)
+		if err.Error() == "unauthorized" {
+			_, _, _ = ctx.EffectiveMessage.EditText(b, "Error: You must be connected to GitHub to view/edit settings.", nil)
+		} else {
+			_, _, _ = ctx.EffectiveMessage.EditText(b, "Auth error. Please reconnect.", nil)
+		}
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	parts := strings.Split(l.RepoFullName, "/")
 	if len(parts) != 2 {
 		return nil
@@ -609,19 +597,10 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page int) error {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error. Please /connect again.", ShowAlert: true})
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := h.getClient(b, ctx)
 	if err != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error.", ShowAlert: true})
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	opts := &gh.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
@@ -659,18 +638,10 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 }
 
 func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, repoID int64) error {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Please /connect to GitHub first.", ShowAlert: true})
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := h.getClient(b, ctx)
 	if err != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error.", ShowAlert: true})
 		return nil
 	}
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 
 	repo, _, err := client.Repositories.GetByID(context.Background(), repoID)
 	if err != nil {
@@ -803,19 +774,10 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 		return nil
 	}
 
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Please connect GitHub account first via /connect", ShowAlert: true})
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := h.getClient(b, ctx)
 	if err != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Auth error. Reconnect via /connect", ShowAlert: true})
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	ctxBg := context.Background()
 
 	var msg string

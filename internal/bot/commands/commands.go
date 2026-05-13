@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -33,12 +32,10 @@ type CommandHandler struct {
 	StateCache      *cache.Cache[string, int64]
 	ClientFactory   *gh.ClientFactory
 	EncryptionKey   string
-	AdminCache      *cache.Cache[int64, []int64]
-	ReloadRateLimit *cache.Cache[int64, time.Time]
 	ContextCache    *cache.Cache[string, models.MessageContext]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64], reloadLimit *cache.Cache[int64, time.Time]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext]) *CommandHandler {
 	return &CommandHandler{
 		Config:          cfg,
 		DB:              database,
@@ -46,8 +43,6 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 		StateCache:      stateCache,
 		ClientFactory:   factory,
 		EncryptionKey:   key,
-		AdminCache:      adminCache,
-		ReloadRateLimit: reloadLimit,
 		ContextCache:    ctxCache,
 	}
 }
@@ -193,22 +188,18 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	repoFullName := args[1]
-	user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if uErr != nil || user.EncryptedOAuthToken == "" {
-		url, err := h.loginURLForUser(ctx.EffectiveUser.Id)
-		if err != nil {
-			return err
+	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+	if err != nil {
+		if err.Error() == "unauthorized" {
+			url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
+			if urlErr != nil {
+				return urlErr
+			}
+			return h.replyWithConnectButton(b, ctx, fmt.Sprintf("Connect your GitHub account first to link repository %s.", repoFullName), url)
 		}
-		return h.replyWithConnectButton(b, ctx, fmt.Sprintf("Connect your GitHub account first to link repository %s.", repoFullName), url)
-	}
-
-	token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-	if decErr != nil {
 		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	var owner, repo string
 	if n := len(repoFullName); n > 0 {
 		for i := 0; i < n; i++ {
@@ -285,7 +276,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		WebhookID:    webhookID,
 	}
 
-	err := h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
+	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
 		_, err := ctx.EffectiveMessage.Reply(b, "Error linking repository.", nil)
 		return err
@@ -310,19 +301,15 @@ func (h *CommandHandler) listUserRepos(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int) error {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Please /connect your GitHub account first to list repositories.", nil)
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		if err.Error() == "unauthorized" {
+			_, _ = ctx.EffectiveMessage.Reply(b, "Please /connect your GitHub account first to list repositories.", nil)
+		} else {
+			_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		}
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	opts := &github.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
@@ -417,15 +404,14 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	var webhookStatusMsg string
 
 	if link.WebhookID != 0 {
-		user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-		if uErr != nil || user.EncryptedOAuthToken == "" {
-			webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
-		} else {
-			token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-			if decErr != nil {
-				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
+		client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+		if err != nil {
+			if err.Error() == "unauthorized" {
+				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
 			} else {
-				client := h.ClientFactory.GetUserClient(context.Background(), token)
+				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
+			}
+		} else {
 
 				var owner, repo string
 				for i := 0; i < len(repoFullName); i++ {
@@ -452,7 +438,6 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 				}
 			}
 		}
-	}
 
 	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
@@ -500,48 +485,11 @@ func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
 
 <b>Configuration</b>
 /settings - Configure event notifications
-/reload - Reload admin cache
-
 
 <b>Need more help?</b>
 Visit the <a href="https://github.com/AshokShau/GithubBot">GitHub page</a> for more details.`
 
 	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
-	return err
-}
-
-func (h *CommandHandler) Reload(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type == gotgbot.ChatTypePrivate {
-		return nil
-	}
-
-	if expiry, ok := h.ReloadRateLimit.Get(ctx.EffectiveChat.Id); ok {
-		remaining := time.Until(expiry)
-		if remaining > 0 {
-			minutes := int(math.Ceil(remaining.Minutes()))
-			_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Please wait %d minutes before reloading again.", minutes), nil)
-			return nil
-		}
-	}
-
-	member, err := b.GetChatMember(ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, nil)
-	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to check permissions.", nil)
-		return nil
-	}
-
-	status := member.GetStatus()
-	isAdmin := status == "administrator" || status == "creator"
-
-	if !isAdmin {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Only admins can reload the cache.", nil)
-		return nil
-	}
-
-	h.AdminCache.Delete(ctx.EffectiveChat.Id)
-	expiry := time.Now().Add(10 * time.Minute)
-	h.ReloadRateLimit.Set(ctx.EffectiveChat.Id, expiry, 10*time.Minute)
-	_, err = ctx.EffectiveMessage.Reply(b, "Admin cache reloaded.", nil)
 	return err
 }
 
@@ -685,21 +633,19 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 }
 
 func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context) (*github.Client, error) {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
-		if urlErr != nil {
-			return nil, urlErr
-		}
-		_ = h.replyWithConnectButton(b, ctx, "Connect your GitHub account first.", url)
-		return nil, fmt.Errorf("auth required")
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
+		if err.Error() == "unauthorized" {
+			url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
+			if urlErr != nil {
+				return nil, urlErr
+			}
+			_ = h.replyWithConnectButton(b, ctx, "Connect your GitHub account first.", url)
+			return nil, fmt.Errorf("auth required")
+		}
 		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
 		return nil, err
 	}
 
-	return h.ClientFactory.GetUserClient(context.Background(), token), nil
+	return client, nil
 }

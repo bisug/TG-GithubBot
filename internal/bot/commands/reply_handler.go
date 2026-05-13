@@ -8,7 +8,6 @@ import (
 	"github-webhook/internal/db"
 	"github-webhook/internal/github"
 	"github-webhook/internal/models"
-	"github-webhook/internal/utils"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -44,19 +43,13 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	commentBody := msg.Text
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		// _, _ = msg.Reply(b, "Please connect GitHub account via /connect first.", nil)
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		_, _ = msg.Reply(b, "Auth error. Reconnect via /connect", nil)
+		if err.Error() != "unauthorized" {
+			_, _ = msg.Reply(b, "Auth error. Reconnect via /connect", nil)
+		}
 		return nil
 	}
-
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
 	if mContext.Type == "pr_review_comment" && mContext.CommentID != 0 {
 		comment := &gh.PullRequestComment{
 			Body:      &commentBody,

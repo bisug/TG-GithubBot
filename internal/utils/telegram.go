@@ -10,11 +10,11 @@ func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64) bool {
 		return false
 	}
 
-	switch m := member.(type) {
+	switch member.(type) {
 	case *gotgbot.ChatMemberOwner:
 		return true // Owner always has permission
 	case *gotgbot.ChatMemberAdministrator:
-		return m.CanChangeInfo // Check specific permission
+		return true // Allow any administrator
 	default:
 		return false
 	}

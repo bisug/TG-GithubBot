@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github-webhook/internal/cache"
@@ -22,6 +23,7 @@ import (
 )
 
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+var multipleNewlinesRegex = regexp.MustCompile(`\n{3,}`)
 
 type WebhookServer struct {
 	Config       *config.Config
@@ -29,6 +31,7 @@ type WebhookServer struct {
 	Bot          *gotgbot.Bot
 	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
 	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
+	Wg           sync.WaitGroup
 }
 
 func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
@@ -98,7 +101,9 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
 
+	s.Wg.Add(1)
 	go func() {
+		defer s.Wg.Done()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				log.Printf("Webhook processing panic event=%s delivery=%s hook_id=%d chat=%d elapsed=%s panic=%v", eventType, deliveryID, hookID, chatID, time.Since(receivedAt).Round(time.Millisecond), recovered)
@@ -171,8 +176,7 @@ func normalizeMessage(s string) string {
 	}
 	out := strings.Join(lines, "\n")
 
-	re := regexp.MustCompile(`\n{3,}`)
-	out = re.ReplaceAllString(out, "\n\n")
+	out = multipleNewlinesRegex.ReplaceAllString(out, "\n\n")
 
 	out = strings.TrimSpace(out)
 	return out

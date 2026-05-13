@@ -65,8 +65,6 @@ func run() (runErr error) {
 	oauthStateCache := cache.New[string, int64]()
 	contextCache := cache.New[string, models.MessageContext]()
 	actionCache := cache.New[string, models.PRActionContext]()
-	adminCache := cache.New[int64, []int64]()
-	reloadRateLimit := cache.New[int64, time.Time]()
 
 	b, err := gotgbot.NewBot(cfg.TelegramToken, nil)
 	if err != nil {
@@ -83,7 +81,7 @@ func run() (runErr error) {
 	dispatcher.AddHandlerToGroup(handlers.NewMessage(nil, middleware.TrackUserAndChat(database)), -1)
 
 	// Commands
-	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit)
+	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache)
 	dispatcher.AddHandler(handlers.NewCommand("start", cmdHandler.Start))
 	dispatcher.AddHandler(handlers.NewCommand("connect", cmdHandler.Connect))
 	dispatcher.AddHandler(handlers.NewCommand("add", cmdHandler.AddRepo))
@@ -94,7 +92,6 @@ func run() (runErr error) {
 	dispatcher.AddHandler(handlers.NewCommand("config", cmdHandler.Settings))
 	dispatcher.AddHandler(handlers.NewCommand("settings", cmdHandler.Settings))
 	dispatcher.AddHandler(handlers.NewCommand("help", cmdHandler.Help))
-	dispatcher.AddHandler(handlers.NewCommand("reload", cmdHandler.Reload))
 	dispatcher.AddHandler(handlers.NewCommand("privacy", cmdHandler.Privacy))
 	dispatcher.AddHandler(handlers.NewCommand("logout", cmdHandler.Logout))
 	dispatcher.AddHandler(handlers.NewCommand("close", cmdHandler.Close))
@@ -115,7 +112,7 @@ func run() (runErr error) {
 		return msg.ReplyToMessage != nil
 	}, replyHandler.HandleReply))
 
-	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache, adminCache)
+	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache)
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("c:"), cbHandler.HandleSettings))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("act:"), cbHandler.HandlePRAction))
 
@@ -134,8 +131,8 @@ func run() (runErr error) {
 		_, _ = writer.Write([]byte(html))
 	})
 
-	webhookHandler := github.NewWebhookServer(cfg, database, b, contextCache, actionCache).Handler
-	mux.HandleFunc("/webhook/", webhookHandler)
+	webhookServer := github.NewWebhookServer(cfg, database, b, contextCache, actionCache)
+	mux.HandleFunc("/webhook/", webhookServer.Handler)
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
@@ -283,7 +280,7 @@ func run() (runErr error) {
 		if err != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			shutdownErr := shutdown(shutdownCtx, server, updater, database)
+			shutdownErr := shutdown(shutdownCtx, server, updater, database, webhookServer)
 			databaseClosed = true
 			if shutdownErr != nil {
 				return errors.Join(fmt.Errorf("server failed: %w", err), fmt.Errorf("shutdown after server failure: %w", shutdownErr))
@@ -296,7 +293,7 @@ func run() (runErr error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	err = shutdown(shutdownCtx, server, updater, database)
+	err = shutdown(shutdownCtx, server, updater, database, webhookServer)
 	databaseClosed = true
 	if err != nil {
 		return fmt.Errorf("shutdown: %w", err)
@@ -306,7 +303,7 @@ func run() (runErr error) {
 	return nil
 }
 
-func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, database *db.DB) error {
+func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, database *db.DB, webhookServer *github.WebhookServer) error {
 	var errs []error
 
 	if err := updater.Stop(); err != nil {
@@ -315,6 +312,18 @@ func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, da
 
 	if err := server.Shutdown(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("shutdown server: %w", err))
+	}
+
+	webhookWaitCh := make(chan struct{})
+	go func() {
+		webhookServer.Wg.Wait()
+		close(webhookWaitCh)
+	}()
+
+	select {
+	case <-ctx.Done():
+		errs = append(errs, fmt.Errorf("webhook wait: %w", ctx.Err()))
+	case <-webhookWaitCh:
 	}
 
 	if err := database.Client.Disconnect(ctx); err != nil {
