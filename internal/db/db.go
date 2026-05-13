@@ -180,6 +180,22 @@ func (d *DB) GetRepoLink(ctx context.Context, chatID int64, repoFullName string)
 	return nil, errors.New("link not found")
 }
 
+// GetRepoLinkByWebhookID returns a specific repository link by webhook ID
+func (d *DB) GetRepoLinkByWebhookID(ctx context.Context, chatID int64, webhookID int64) (*models.RepoLink, error) {
+	links, err := d.GetChatLinks(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, link := range links {
+		if link.WebhookID == webhookID {
+			return &link, nil
+		}
+	}
+
+	return nil, errors.New("link not found")
+}
+
 // GetChatsForRepo finds all chats subscribed to a given repository.
 func (d *DB) GetChatsForRepo(ctx context.Context, repoFullName string) ([]models.Chat, error) {
 	cursor, err := d.Chats.Find(ctx, bson.M{"links.repo_full_name": repoFullName})

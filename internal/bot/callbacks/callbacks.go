@@ -684,8 +684,9 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 
 	webhookID := createdHook.GetID()
 	link := models.RepoLink{
-		RepoFullName: repo.GetFullName(),
-		WebhookID:    webhookID,
+		RepoFullName:    repo.GetFullName(),
+		WebhookID:       webhookID,
+		MessageThreadID: ctx.EffectiveMessage.MessageThreadId,
 	}
 
 	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)

@@ -136,12 +136,21 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 
 	msg = normalizeMessage(msg)
 
+	var threadID int64
+	if hookID != 0 {
+		link, err := s.DB.GetRepoLinkByWebhookID(context.Background(), chatID, hookID)
+		if err == nil && link != nil {
+			threadID = link.MessageThreadID
+		}
+	}
+
 	opts := &gotgbot.SendMessageOpts{
 		ParseMode: "MarkdownV2",
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
 			IsDisabled: true,
 		},
-		ReplyMarkup: markup,
+		ReplyMarkup:     markup,
+		MessageThreadId: threadID,
 	}
 
 	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)
@@ -151,7 +160,8 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
 				IsDisabled: true,
 			},
-			ReplyMarkup: markup,
+			ReplyMarkup:     markup,
+			MessageThreadId: threadID,
 		}
 		sentMsg, err = s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
 		if err != nil {

@@ -272,8 +272,9 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	webhookID := createdHook.GetID()
 	link := models.RepoLink{
-		RepoFullName: repoFullName,
-		WebhookID:    webhookID,
+		RepoFullName:    repoFullName,
+		WebhookID:       webhookID,
+		MessageThreadID: ctx.EffectiveMessage.MessageThreadId,
 	}
 
 	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)

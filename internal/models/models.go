@@ -15,8 +15,9 @@ type User struct {
 
 // RepoLink represents a link to a GitHub repository within a chat
 type RepoLink struct {
-	RepoFullName string `bson:"repo_full_name" json:"repo_full_name"`
-	WebhookID    int64  `bson:"webhook_id,omitempty" json:"webhook_id,omitempty"`
+	RepoFullName    string `bson:"repo_full_name" json:"repo_full_name"`
+	WebhookID       int64  `bson:"webhook_id,omitempty" json:"webhook_id,omitempty"`
+	MessageThreadID int64  `bson:"message_thread_id,omitempty" json:"message_thread_id,omitempty"`
 }
 
 // Chat represents a Telegram chat (group, channel, or private)
