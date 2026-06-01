@@ -19,9 +19,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o tg-githubbot cmd/bot/main.go
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.22
 
 WORKDIR /app
+
+RUN addgroup -S app && adduser -S -G app app
 
 # Copy the CA certificates from builder
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -31,6 +33,8 @@ COPY --from=builder /app/tg-githubbot .
 
 # Expose the webhook port (default 8080)
 EXPOSE 8080
+
+USER app
 
 # Command to run the executable
 CMD ["./tg-githubbot"]

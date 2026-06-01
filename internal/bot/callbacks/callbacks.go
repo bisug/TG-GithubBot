@@ -699,7 +699,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 
 	// Reuse showRepoMenu to let user choose notifications immediately
 	kb := h.repoMenuButtons(&link)
-	
+
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", repo.GetFullName())
 	_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},

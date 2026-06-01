@@ -26,25 +26,38 @@ import (
 )
 
 type CommandHandler struct {
-	Config          *config.Config
-	DB              *db.DB
-	OAuth           *gh.OAuth
-	StateCache      *cache.Cache[string, int64]
-	ClientFactory   *gh.ClientFactory
-	EncryptionKey   string
-	ContextCache    *cache.Cache[string, models.MessageContext]
+	Config        *config.Config
+	DB            *db.DB
+	OAuth         *gh.OAuth
+	StateCache    *cache.Cache[string, int64]
+	ClientFactory *gh.ClientFactory
+	EncryptionKey string
+	ContextCache  *cache.Cache[string, models.MessageContext]
 }
 
 func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext]) *CommandHandler {
 	return &CommandHandler{
-		Config:          cfg,
-		DB:              database,
-		OAuth:           oauth,
-		StateCache:      stateCache,
-		ClientFactory:   factory,
-		EncryptionKey:   key,
-		ContextCache:    ctxCache,
+		Config:        cfg,
+		DB:            database,
+		OAuth:         oauth,
+		StateCache:    stateCache,
+		ClientFactory: factory,
+		EncryptionKey: key,
+		ContextCache:  ctxCache,
 	}
+}
+
+func requireAdminOrPrivate(b *gotgbot.Bot, ctx *ext.Context, deniedMessage string) error {
+	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type == gotgbot.ChatTypePrivate {
+		return nil
+	}
+
+	if ctx.EffectiveChat != nil && ctx.EffectiveUser != nil && utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
+		return nil
+	}
+
+	_, err := ctx.EffectiveMessage.Reply(b, deniedMessage, nil)
+	return err
 }
 
 func (h *CommandHandler) Start(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -177,8 +190,7 @@ func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboa
 }
 
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can add repositories.", nil)
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can add repositories."); err != nil {
 		return err
 	}
 
@@ -352,8 +364,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 }
 
 func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can modify settings.", nil)
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can modify settings."); err != nil {
 		return err
 	}
 
@@ -384,8 +395,7 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can remove repositories.", nil)
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can remove repositories."); err != nil {
 		return err
 	}
 
@@ -414,31 +424,31 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 			}
 		} else {
 
-				var owner, repo string
-				for i := 0; i < len(repoFullName); i++ {
-					if repoFullName[i] == '/' {
-						owner = repoFullName[:i]
-						repo = repoFullName[i+1:]
-						break
-					}
+			var owner, repo string
+			for i := 0; i < len(repoFullName); i++ {
+				if repoFullName[i] == '/' {
+					owner = repoFullName[:i]
+					repo = repoFullName[i+1:]
+					break
 				}
+			}
 
-				if owner != "" && repo != "" {
-					_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
-					if err != nil {
-						if h.handleAuthError(b, ctx, err) {
-							webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
+			if owner != "" && repo != "" {
+				_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
+				if err != nil {
+					if h.handleAuthError(b, ctx, err) {
+						webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
+					} else {
+						var errResp *github.ErrorResponse
+						if errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
 						} else {
-							var errResp *github.ErrorResponse
-							if errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
-							} else {
-								webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
-							}
+							webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
 						}
 					}
 				}
 			}
 		}
+	}
 
 	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
@@ -493,7 +503,6 @@ Visit the <a href="https://github.com/AshokShau/GithubBot">GitHub page</a> for m
 	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
 	return err
 }
-
 
 func (h *CommandHandler) Privacy(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := `<b>Privacy Policy</b>
@@ -557,6 +566,10 @@ func (h *CommandHandler) Reopen(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 	msg := ctx.EffectiveMessage
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can approve pull requests in this chat."); err != nil {
+		return err
+	}
+
 	if msg.ReplyToMessage == nil {
 		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
 		return err
@@ -598,6 +611,10 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, state string) error {
 	msg := ctx.EffectiveMessage
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can update issues or pull requests in this chat."); err != nil {
+		return err
+	}
+
 	if msg.ReplyToMessage == nil {
 		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
 		return err

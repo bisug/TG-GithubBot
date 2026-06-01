@@ -121,14 +121,29 @@ func (d *DB) UpsertChat(ctx context.Context, chat *models.Chat) error {
 // AddRepoLink adds a repository link to a chat
 func (d *DB) AddRepoLink(ctx context.Context, chatID int64, link models.RepoLink) error {
 	filter := bson.M{"_id": chatID}
-	_, _ = d.Chats.UpdateOne(ctx, filter, bson.M{
-		"$pull": bson.M{"links": bson.M{"repo_full_name": link.RepoFullName}},
-	})
-
-	update := bson.M{
-		"$push": bson.M{"links": link},
+	update := mongo.Pipeline{
+		{{
+			Key: "$set",
+			Value: bson.D{{
+				Key: "links",
+				Value: bson.D{{
+					Key: "$concatArrays",
+					Value: bson.A{
+						bson.D{{
+							Key: "$filter",
+							Value: bson.D{
+								{Key: "input", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$links", bson.A{}}}}},
+								{Key: "as", Value: "link"},
+								{Key: "cond", Value: bson.D{{Key: "$ne", Value: bson.A{"$$link.repo_full_name", link.RepoFullName}}}},
+							},
+						}},
+						bson.A{link},
+					},
+				}},
+			}},
+		}},
 	}
-	_, err := d.Chats.UpdateOne(ctx, filter, update)
+	_, err := d.Chats.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 
 	d.ChatReposCache.Delete(chatID)
 	return err

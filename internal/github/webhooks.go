@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,11 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/google/go-github/v85/github"
+)
+
+const (
+	maxWebhookPayloadBytes = 10 << 20 // 10 MiB
+	webhookDBTimeout       = 5 * time.Second
 )
 
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
@@ -46,6 +52,11 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	// Path: /webhook/<token>
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	receivedAt := time.Now()
 	var chatID int64
 	eventType := github.WebHookType(r)
@@ -76,8 +87,18 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Webhook received event=%s delivery=%s hook_id=%s chat=%d remote=%s", eventType, deliveryID, hookIDHeader, chatID, r.RemoteAddr)
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookPayloadBytes)
+	defer r.Body.Close()
+
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			log.Printf("Webhook rejected: payload too large event=%s delivery=%s hook_id=%s chat=%d limit=%d", eventType, deliveryID, hookIDHeader, chatID, maxBytesErr.Limit)
+			http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
 		if s.Config.GitHubWebhookSecret == "" {
 			log.Printf("Webhook Warning: No GITHUB_WEBHOOK_SECRET configured. Validation skipped. event=%s chat=%d", eventType, chatID)
 			body, _ := io.ReadAll(r.Body)
@@ -119,7 +140,9 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
 		newFullName := e.GetRepo().GetFullName()
 		if newFullName != "" && hookID != 0 {
-			err := s.DB.UpdateRepoLinkName(context.Background(), chatID, hookID, newFullName)
+			ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
+			err := s.DB.UpdateRepoLinkName(ctx, chatID, hookID, newFullName)
+			cancel()
 			if err != nil {
 				log.Printf("Failed to update repo name for chat %d: %v", chatID, err)
 			} else {
@@ -138,7 +161,9 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 
 	var threadID int64
 	if hookID != 0 {
-		link, err := s.DB.GetRepoLinkByWebhookID(context.Background(), chatID, hookID)
+		ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
+		link, err := s.DB.GetRepoLinkByWebhookID(ctx, chatID, hookID)
+		cancel()
 		if err == nil && link != nil {
 			threadID = link.MessageThreadID
 		}

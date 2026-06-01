@@ -35,6 +35,9 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 	if msg.ReplyToMessage == nil {
 		return nil
 	}
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can comment on GitHub items from this chat."); err != nil {
+		return err
+	}
 
 	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	mContext, found := h.ContextCache.Get(key)

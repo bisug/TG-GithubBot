@@ -155,7 +155,10 @@ func run() (runErr error) {
 		}
 
 		oauthStateCache.Delete(state)
-		token, err := oauth.ExchangeCode(context.Background(), code)
+		requestCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		token, err := oauth.ExchangeCode(requestCtx, code)
 		if err != nil {
 			http.Error(w, "Failed to exchange code", http.StatusInternalServerError)
 			return
@@ -167,8 +170,8 @@ func run() (runErr error) {
 			return
 		}
 
-		ghClient := clientFactory.GetUserClient(context.Background(), token.AccessToken)
-		u, _, err := ghClient.Users.Get(context.Background(), "")
+		ghClient := clientFactory.GetUserClient(requestCtx, token.AccessToken)
+		u, _, err := ghClient.Users.Get(requestCtx, "")
 		if err != nil {
 			http.Error(w, "Failed to fetch user", http.StatusInternalServerError)
 			return
@@ -180,7 +183,7 @@ func run() (runErr error) {
 			GitHubUsername:      u.GetLogin(),
 			EncryptedOAuthToken: encToken,
 		}
-		if err := database.UpsertUser(context.Background(), user); err != nil {
+		if err := database.UpsertUser(requestCtx, user); err != nil {
 			http.Error(w, "DB Error", http.StatusInternalServerError)
 			return
 		}
@@ -211,7 +214,11 @@ func run() (runErr error) {
 	}
 
 	server := &http.Server{
-		Handler: mux,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErr := make(chan error, 1)
@@ -261,10 +268,9 @@ func run() (runErr error) {
 	} else {
 		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
 		webhookPath := "/bot" + cfg.TelegramToken
-		fullWebhookURL := webhookBase + webhookPath
 
 		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(""))
-		log.Printf("Registered local Telegram webhook handler for %s", webhookPath)
+		log.Printf("Registered local Telegram webhook handler for /bot<redacted>")
 
 		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
 			MaxConnections:     100,
@@ -278,7 +284,7 @@ func run() (runErr error) {
 				}
 			}()
 		} else {
-			log.Printf("✅ Bot successfully registered Webhook at Telegram: %s", fullWebhookURL)
+			log.Printf("✅ Bot successfully registered Webhook at Telegram: %s/bot<redacted>", webhookBase)
 		}
 	}
 

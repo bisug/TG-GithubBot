@@ -139,6 +139,7 @@ TELEGRAM_WEBHOOK_URL=https://your-domain.com
 # GitHub OAuth App credentials
 GITHUB_CLIENT_ID=Iv1...
 GITHUB_CLIENT_SECRET=...
+GITHUB_WEBHOOK_SECRET=...
 
 # HTTP server port (Use 10000 for Render, 8080 for Standard/Docker)
 PORT=8080
@@ -146,8 +147,14 @@ PORT=8080
 # (Optional) Set to true for Polling (Best for Cloud/Local). Default: false (Webhooks)
 USE_POLLING=false
 
+# MongoDB connection string
+MONGODB_URI=mongodb://localhost:27017
+
 # MongoDB database name
 DATABASE_NAME=github_bot
+
+# Stable 32-byte hex key for encrypting stored tokens
+ENCRYPTION_KEY=...
 ```
 
 > [!CAUTION]
@@ -224,7 +231,7 @@ Docker Compose is the recommended deployment path.
 4. Check logs:
 
    ```bash
-   docker compose logs -f github-bot
+   docker compose logs -f bot
    ```
 
 5. Confirm the health page:
