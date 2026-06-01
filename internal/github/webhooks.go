@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	maxWebhookPayloadBytes = 10 << 20 // 10 MiB
+	maxWebhookPayloadBytes = 25 * 1024 * 1024
 	webhookDBTimeout       = 5 * time.Second
 )
 
@@ -110,7 +110,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	event, err := github.ParseWebHook(eventType, payload)
+	event, err := parseWebhookEvent(eventType, payload)
 	if err != nil {
 		log.Printf("Webhook rejected: parse failed event=%s delivery=%s hook_id=%s chat=%d error=%v", eventType, deliveryID, hookIDHeader, chatID, err)
 		http.Error(w, "Parse error", http.StatusInternalServerError)
@@ -285,8 +285,16 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
 }
 
-func (s *WebhookServer) formatMessage(event interface{}) (string, *gotgbot.InlineKeyboardMarkup) {
+func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *gotgbot.InlineKeyboardMarkup) {
+	defer func() {
+		if recover() != nil {
+			msg, markup = FormatGenericEvent(event)
+		}
+	}()
+
 	switch e := event.(type) {
+	case *GenericWebhookEvent:
+		return FormatGenericWebhookEvent(e)
 	case *github.PushEvent:
 		return FormatPushEvent(e)
 	case *github.PullRequestEvent:
