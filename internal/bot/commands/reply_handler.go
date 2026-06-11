@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github-webhook/internal/cache"
 	"github-webhook/internal/db"
@@ -35,9 +36,6 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 	if msg.ReplyToMessage == nil {
 		return nil
 	}
-	if err := requireAdminOrPrivate(b, ctx, "Only admins can comment on GitHub items from this chat."); err != nil {
-		return err
-	}
 
 	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	mContext, found := h.ContextCache.Get(key)
@@ -45,10 +43,16 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	commentBody := msg.Text
+	commentBody := strings.TrimSpace(msg.Text)
+	if commentBody == "" {
+		return nil
+	}
+
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() != "unauthorized" {
+		if err.Error() == "unauthorized" {
+			_, _ = msg.Reply(b, "Please /connect your GitHub account in a private chat before replying to GitHub items.", nil)
+		} else {
 			_, _ = msg.Reply(b, "Auth error. Reconnect via /connect", nil)
 		}
 		return nil
