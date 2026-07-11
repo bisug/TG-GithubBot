@@ -36,7 +36,7 @@ func (h *CallbackHandler) getClient(b *gotgbot.Bot, ctx *ext.Context) (*gh.Clien
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
 		msg := "Auth error."
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, github.ErrUnauthorized) {
 			msg = "Please /connect to GitHub first."
 		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: msg, ShowAlert: true})
@@ -93,55 +93,6 @@ func cbAddRepoPage(page int) string {
 
 func cbAddRepoID(repoID int64) string {
 	return cb(cbPrefixSettings, cbAddRepo, "id", strconv.FormatInt(repoID, 10))
-}
-
-func repoButtonText(name string) string {
-	const max = 42
-	if len(name) <= max {
-		return name
-	}
-	return name[:max-1] + "…"
-}
-
-func repoPageNav(page int, resp *gh.Response) []gotgbot.InlineKeyboardButton {
-	var navRow []gotgbot.InlineKeyboardButton
-
-	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, ui.Callback("<", cbAddRepoPage(resp.PrevPage),
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconPrevious),
-		))
-	}
-
-	startPage := page - 1
-	if startPage < 1 {
-		startPage = 1
-	}
-
-	endPage := page + 1
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-	if resp.LastPage == 0 && resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-
-	for i := startPage; i <= endPage; i++ {
-		text := strconv.Itoa(i)
-		if i == page {
-			text = "· " + text + " ·"
-		}
-		navRow = append(navRow, ui.Callback(text, cbAddRepoPage(i), ui.WithStyle(ui.StylePrimary)))
-	}
-
-	if resp.NextPage != 0 {
-		navRow = append(navRow, ui.Callback(">", cbAddRepoPage(resp.NextPage),
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconNext),
-		))
-	}
-
-	return navRow
 }
 
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -372,7 +323,7 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 	if l.WebhookID != 0 {
 		client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 		if err != nil {
-			if err.Error() == "unauthorized" {
+			if errors.Is(err, github.ErrUnauthorized) {
 				warning = "\n\nWarning: your GitHub account is not connected, so the GitHub webhook could not be removed automatically."
 			} else {
 				warning = "\n\nWarning: your GitHub token could not be decrypted, so the GitHub webhook was not removed automatically."
@@ -486,7 +437,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, page int) error {
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, github.ErrUnauthorized) {
 			_, _, _ = ctx.EffectiveMessage.EditText(b, "Error: You must be connected to GitHub to view/edit settings.", nil)
 		} else {
 			_, _, _ = ctx.EffectiveMessage.EditText(b, "Auth error. Please reconnect.", nil)
@@ -583,7 +534,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(repoButtonText(l.RepoFullName), cbRepo(cbRepoMenu, &l),
+			ui.Callback(ui.CompactButtonText(l.RepoFullName), cbRepo(cbRepoMenu, &l),
 				ui.WithStyle(ui.StylePrimary),
 				ui.WithCustomEmojiEnv(ui.IconSettings),
 			),
@@ -619,14 +570,14 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(repoButtonText(repo.GetFullName()), cbAddRepoID(repo.GetID()),
+			ui.Callback(ui.CompactButtonText(repo.GetFullName()), cbAddRepoID(repo.GetID()),
 				ui.WithStyle(ui.StylePrimary),
 				ui.WithCustomEmojiEnv(ui.IconAdd),
 			),
 		})
 	}
 
-	if navRow := repoPageNav(page, resp); len(navRow) > 0 {
+	if navRow := ui.RepoPageNav(page, resp, cbAddRepoPage); len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 

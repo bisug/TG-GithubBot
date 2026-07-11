@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"github-webhook/internal/bot/middleware"
 	"log"
 	"log/slog"
@@ -42,6 +43,9 @@ func main() {
 
 func run() (runErr error) {
 	cfg := config.Load()
+	if cfg.GitHubWebhookSecret == "" {
+		log.Printf("WARNING: GITHUB_WEBHOOK_SECRET is empty — incoming webhook signature verification is DISABLED. Only use this for local development.")
+	}
 	database, err := db.Connect(cfg)
 	if err != nil {
 		return fmt.Errorf("connect to DB: %w", err)
@@ -122,6 +126,11 @@ func run() (runErr error) {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("act:"), cbHandler.HandlePRAction))
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("ok"))
+	})
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		html := fmt.Sprintf(`
 		<html>
@@ -155,42 +164,49 @@ func run() (runErr error) {
 		}
 
 		oauthStateCache.Delete(state)
-		requestCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
 
-		token, err := oauth.ExchangeCode(requestCtx, code)
-		if err != nil {
-			http.Error(w, "Failed to exchange code", http.StatusInternalServerError)
-			return
-		}
+		// Do the (slow) GitHub exchange + DB write in the background so we return a
+		// fast 200 to the browser. The request context is cancelled when we return,
+		// so the goroutine uses its own context with a generous timeout.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
 
-		encToken, err := utils.Encrypt(token.AccessToken, cfg.EncryptionKey)
-		if err != nil {
-			http.Error(w, "Encryption failed", http.StatusInternalServerError)
-			return
-		}
+			token, err := oauth.ExchangeCode(ctx, code)
+			if err != nil {
+				log.Printf("OAuth exchange failed for %d: %v", telegramID, err)
+				return
+			}
 
-		ghClient := clientFactory.GetUserClient(requestCtx, token.AccessToken)
-		u, _, err := ghClient.Users.Get(requestCtx, "")
-		if err != nil {
-			http.Error(w, "Failed to fetch user", http.StatusInternalServerError)
-			return
-		}
+			encToken, err := utils.Encrypt(token.AccessToken, cfg.EncryptionKey)
+			if err != nil {
+				log.Printf("OAuth encrypt failed for %d: %v", telegramID, err)
+				return
+			}
 
-		user := &models.User{
-			ID:                  telegramID,
-			GitHubUserID:        u.GetID(),
-			GitHubUsername:      u.GetLogin(),
-			EncryptedOAuthToken: encToken,
-		}
-		if err := database.UpsertUser(requestCtx, user); err != nil {
-			http.Error(w, "DB Error", http.StatusInternalServerError)
-			return
-		}
+			ghClient := clientFactory.GetUserClient(ctx, token.AccessToken)
+			u, _, err := ghClient.Users.Get(ctx, "")
+			if err != nil {
+				log.Printf("OAuth fetch user failed for %d: %v", telegramID, err)
+				return
+			}
 
-		_, _ = b.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", u.GetLogin()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			user := &models.User{
+				ID:                  telegramID,
+				GitHubUserID:        u.GetID(),
+				GitHubUsername:      u.GetLogin(),
+				EncryptedOAuthToken: encToken,
+			}
+			if err := database.UpsertUser(ctx, user); err != nil {
+				log.Printf("OAuth DB upsert failed for %d: %v", telegramID, err)
+				_, _ = b.SendMessage(telegramID, "⚠️ Connected to GitHub but failed to save your token. Please run /connect again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				return
+			}
 
-		html := fmt.Sprintf(`
+			_, _ = b.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", html.EscapeString(u.GetLogin())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		}()
+
+		htmlBody := fmt.Sprintf(`
 		<html>
 		<head><title>Connected</title></head>
 		<body style="font-family: sans-serif; text-align: center; padding: 50px;">
@@ -205,7 +221,7 @@ func run() (runErr error) {
 		</body>
 		</html>`, b.User.Username, b.User.Username)
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(html))
+		_, _ = w.Write([]byte(htmlBody))
 	})
 
 	listener, err := net.Listen("tcp", ":"+cfg.Port)
@@ -290,6 +306,25 @@ func run() (runErr error) {
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+
+	// Periodically sweep TTL caches so they do not grow unbounded (entries otherwise
+	// only evict on re-access, and most are never read again).
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-signalCtx.Done():
+				return
+			case <-ticker.C:
+				database.ChatReposCache.Cleanup()
+				oauthStateCache.Cleanup()
+				contextCache.Cleanup()
+				actionCache.Cleanup()
+				webhookServer.DeliverySeen.Cleanup()
+			}
+		}
+	}()
 
 	select {
 	case <-signalCtx.Done():

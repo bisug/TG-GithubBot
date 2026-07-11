@@ -68,6 +68,8 @@ func EscapeMarkdownV2URL(text string) string {
 }
 
 // FormatTextWithMarkdown preserves Markdown links and code blocks while escaping other special characters.
+// Link anchors are also escaped: an anchor such as "foo.bar" would otherwise break Telegram's
+// MarkdownV2 parser (unescaped ".") and force a plain-text fallback that drops all formatting.
 func FormatTextWithMarkdown(text string) string {
 	emailRe := regexp.MustCompile(`<[^> ]+@[^> ]+>`)
 	var emails []string
@@ -95,10 +97,28 @@ func FormatTextWithMarkdown(text string) string {
 	for i, original := range originals {
 		placeholder := fmt.Sprintf("___PLACEHOLDER_%d___", i)
 		escapedPlaceholder := EscapeMarkdownV2(placeholder)
-		escapedBody = strings.Replace(escapedBody, escapedPlaceholder, original, 1)
+		escapedBody = strings.Replace(escapedBody, escapedPlaceholder, restoreProtectedSegment(original), 1)
 	}
 
 	return escapedBody
+}
+
+// restoreProtectedSegment returns a MarkdownV2-safe form of a protected segment. Links get their
+// anchor and URL escaped; code spans/fenced blocks are returned verbatim (their contents are literal).
+func restoreProtectedSegment(segment string) string {
+	if text, url, ok := parseMarkdownLink(segment); ok {
+		return fmt.Sprintf("[%s](%s)", EscapeMarkdownV2(text), EscapeMarkdownV2URL(url))
+	}
+	return segment
+}
+
+func parseMarkdownLink(segment string) (text, url string, ok bool) {
+	linkRe := regexp.MustCompile(`^\[(.+)\]\((.+)\)$`)
+	m := linkRe.FindStringSubmatch(segment)
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
 }
 
 func FormatReleaseBody(body string) string {

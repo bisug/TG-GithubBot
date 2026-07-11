@@ -83,7 +83,15 @@ func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models
 func (d *DB) UpsertUser(ctx context.Context, user *models.User) error {
 	opts := options.UpdateOne().SetUpsert(true)
 	filter := bson.M{"_id": user.ID}
-	update := bson.M{
+	_, err := d.Users.UpdateOne(ctx, filter, buildUserUpsert(user), opts)
+	return err
+}
+
+// buildUserUpsert returns the update document for UpsertUser. Mutable fields go under
+// $set; the immutable _id goes under $setOnInsert so re-upserts of existing users never
+// attempt to modify _id (which MongoDB rejects).
+func buildUserUpsert(user *models.User) bson.M {
+	return bson.M{
 		"$set": bson.M{
 			"github_user_id":        user.GitHubUserID,
 			"github_username":       user.GitHubUsername,
@@ -94,8 +102,6 @@ func (d *DB) UpsertUser(ctx context.Context, user *models.User) error {
 			"_id": user.ID,
 		},
 	}
-	_, err := d.Users.UpdateOne(ctx, filter, update, opts)
-	return err
 }
 
 func (d *DB) ClearUserToken(ctx context.Context, userID int64) error {

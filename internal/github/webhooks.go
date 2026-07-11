@@ -38,6 +38,7 @@ type WebhookServer struct {
 	Bot          *gotgbot.Bot
 	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
 	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
+	DeliverySeen *cache.Cache[string, struct{}]                // Key: X-GitHub-Delivery (idempotency)
 	Wg           sync.WaitGroup
 }
 
@@ -48,6 +49,7 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 		Bot:          bot,
 		ContextCache: ctxCache,
 		ActionCache:  actionCache,
+		DeliverySeen: cache.New[string, struct{}](),
 	}
 }
 
@@ -57,6 +59,9 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookPayloadBytes)
+	defer r.Body.Close()
 
 	receivedAt := time.Now()
 	var chatID int64
@@ -88,9 +93,6 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Webhook received event=%s delivery=%s hook_id=%s chat=%d remote=%s", eventType, deliveryID, hookIDHeader, chatID, r.RemoteAddr)
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookPayloadBytes)
-	defer r.Body.Close()
-
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
@@ -121,6 +123,15 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	var hookID int64
 	if idStr := hookIDHeader; idStr != "" {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
+	}
+
+	if deliveryID != "" {
+		if _, seen := s.DeliverySeen.Get(deliveryID); seen {
+			log.Printf("Webhook duplicate delivery ignored event=%s delivery=%s chat=%d", eventType, deliveryID, chatID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		s.DeliverySeen.Set(deliveryID, struct{}{}, 10*time.Minute)
 	}
 
 	s.Wg.Add(1)
@@ -160,6 +171,13 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	msg = normalizeMessage(msg)
+
+	// Telegram rejects messages over 4096 runes. The plain-text fallback already
+	// truncates; cap here too so a long formatted event is not lost outright.
+	const maxTelegramText = 4096
+	if runes := []rune(msg); len(runes) > maxTelegramText {
+		msg = string(runes[:maxTelegramText-1]) + "…"
+	}
 
 	var threadID int64
 	if hookID != 0 {
