@@ -3,9 +3,11 @@ package ui
 import (
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
+	gh "github.com/google/go-github/v85/github"
 )
 
 const (
@@ -84,4 +86,57 @@ func validateCallback(data string) {
 	if len(data) > 64 {
 		log.Printf("Telegram callback_data exceeds 64 bytes: length=%d data=%q", len(data), data)
 	}
+}
+
+// RepoPageNav builds the previous / numbered / next pagination row for the add-repo
+// repository picker. pageData maps a page number to its callback data string; commands
+// and callbacks pass their own builder so ui stays unaware of the callback protocol.
+func RepoPageNav(page int, resp *gh.Response, pageData func(int) string) []gotgbot.InlineKeyboardButton {
+	var navRow []gotgbot.InlineKeyboardButton
+
+	if resp.FirstPage != 0 && resp.PrevPage != 0 {
+		navRow = append(navRow, Callback("<", pageData(resp.PrevPage),
+			WithStyle(StylePrimary),
+			WithCustomEmojiEnv(IconPrevious),
+		))
+	}
+
+	startPage := page - 1
+	if startPage < 1 {
+		startPage = 1
+	}
+
+	endPage := page + 1
+	if resp.LastPage != 0 && endPage > resp.LastPage {
+		endPage = resp.LastPage
+	}
+	if resp.LastPage == 0 && resp.NextPage != 0 {
+		endPage = resp.NextPage
+	}
+
+	for i := startPage; i <= endPage; i++ {
+		text := strconv.Itoa(i)
+		if i == page {
+			text = "· " + text + " ·"
+		}
+		navRow = append(navRow, Callback(text, pageData(i), WithStyle(StylePrimary)))
+	}
+
+	if resp.NextPage != 0 {
+		navRow = append(navRow, Callback(">", pageData(resp.NextPage),
+			WithStyle(StylePrimary),
+			WithCustomEmojiEnv(IconNext),
+		))
+	}
+
+	return navRow
+}
+
+// CompactButtonText truncates a button label to Telegram-friendly length with an ellipsis.
+func CompactButtonText(name string) string {
+	const max = 42
+	if len(name) <= max {
+		return name
+	}
+	return name[:max-1] + "…"
 }

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -50,7 +51,7 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, github.ErrUnauthorized) {
 			_, _ = msg.Reply(b, "Please /connect your GitHub account in a private chat before replying to GitHub items.", nil)
 		} else {
 			_, _ = msg.Reply(b, "Auth error. Reconnect via /connect", nil)

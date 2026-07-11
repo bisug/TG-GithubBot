@@ -140,55 +140,6 @@ func repoSettingsCallback(link models.RepoLink) string {
 	return settingsCallback("c", "r", linkID)
 }
 
-func compactButtonText(name string) string {
-	const max = 42
-	if len(name) <= max {
-		return name
-	}
-	return name[:max-1] + "…"
-}
-
-func repoPageKeyboardNav(page int, resp *github.Response) []gotgbot.InlineKeyboardButton {
-	var navRow []gotgbot.InlineKeyboardButton
-
-	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, ui.Callback("<", addRepoPageCallback(resp.PrevPage),
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconPrevious),
-		))
-	}
-
-	startPage := page - 1
-	if startPage < 1 {
-		startPage = 1
-	}
-
-	endPage := page + 1
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-	if resp.LastPage == 0 && resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-
-	for i := startPage; i <= endPage; i++ {
-		text := strconv.Itoa(i)
-		if i == page {
-			text = "· " + text + " ·"
-		}
-		navRow = append(navRow, ui.Callback(text, addRepoPageCallback(i), ui.WithStyle(ui.StylePrimary)))
-	}
-
-	if resp.NextPage != 0 {
-		navRow = append(navRow, ui.Callback(">", addRepoPageCallback(resp.NextPage),
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconNext),
-		))
-	}
-
-	return navRow
-}
-
 func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err := requireAdminOrPrivate(b, ctx, "Only admins can add repositories."); err != nil {
 		return err
@@ -202,7 +153,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	repoFullName := args[1]
 	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, gh.ErrUnauthorized) {
 			url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
 			if urlErr != nil {
 				return urlErr
@@ -316,7 +267,7 @@ func (h *CommandHandler) listUserRepos(b *gotgbot.Bot, ctx *ext.Context) error {
 func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int) error {
 	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, gh.ErrUnauthorized) {
 			_, _ = ctx.EffectiveMessage.Reply(b, "Please /connect your GitHub account first to list repositories.", nil)
 		} else {
 			_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
@@ -346,14 +297,14 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(compactButtonText(repo.GetFullName()), addRepoIDCallback(repo.GetID()),
+			ui.Callback(ui.CompactButtonText(repo.GetFullName()), addRepoIDCallback(repo.GetID()),
 				ui.WithStyle(ui.StylePrimary),
 				ui.WithCustomEmojiEnv(ui.IconAdd),
 			),
 		})
 	}
 
-	if navRow := repoPageKeyboardNav(page, resp); len(navRow) > 0 {
+	if navRow := ui.RepoPageNav(page, resp, addRepoPageCallback); len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 
@@ -381,7 +332,7 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
 		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(compactButtonText(l.RepoFullName), repoSettingsCallback(l),
+			ui.Callback(ui.CompactButtonText(l.RepoFullName), repoSettingsCallback(l),
 				ui.WithStyle(ui.StylePrimary),
 				ui.WithCustomEmojiEnv(ui.IconSettings),
 			),
@@ -417,7 +368,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	if link.WebhookID != 0 {
 		client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 		if err != nil {
-			if err.Error() == "unauthorized" {
+			if errors.Is(err, gh.ErrUnauthorized) {
 				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
 			} else {
 				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
@@ -654,7 +605,7 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context) (*github.Client, error) {
 	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		if err.Error() == "unauthorized" {
+		if errors.Is(err, gh.ErrUnauthorized) {
 			url, urlErr := h.loginURLForUser(ctx.EffectiveUser.Id)
 			if urlErr != nil {
 				return nil, urlErr
