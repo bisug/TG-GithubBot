@@ -28,6 +28,9 @@ RUN addgroup -S app && adduser -S -G app app
 # Copy the CA certificates from builder
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
+# Copy timezone data so time formatting/local times are correct outside UTC
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
 # Copy the built binary
 COPY --from=builder /app/tg-githubbot .
 
