@@ -83,7 +83,17 @@ func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models
 func (d *DB) UpsertUser(ctx context.Context, user *models.User) error {
 	opts := options.UpdateOne().SetUpsert(true)
 	filter := bson.M{"_id": user.ID}
-	update := bson.M{"$set": user}
+	update := bson.M{
+		"$set": bson.M{
+			"github_user_id":        user.GitHubUserID,
+			"github_username":       user.GitHubUsername,
+			"encrypted_oauth_token": user.EncryptedOAuthToken,
+			"scopes":                user.Scopes,
+		},
+		"$setOnInsert": bson.M{
+			"_id": user.ID,
+		},
+	}
 	_, err := d.Users.UpdateOne(ctx, filter, update, opts)
 	return err
 }
