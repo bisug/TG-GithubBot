@@ -1,6 +1,12 @@
 .git
 .idea
+.github
 .env
+.gitignore
 Dockerfile
 docker-compose.yml
-**/*.md
+render.yaml
+sample.env
+*.exe
+bot
+tg-githubbot

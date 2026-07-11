@@ -16,7 +16,7 @@ services:
       - MONGODB_URI=mongodb://mongo:27017
       - DATABASE_NAME=${DATABASE_NAME:-github_bot}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - USE_POLLING=${USE_POLLING:-false}
+      - USE_POLLING=${USE_POLLING:-true}
       - PORT=8080
     depends_on:
       - mongo
