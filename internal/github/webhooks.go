@@ -172,6 +172,13 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 
 	msg = normalizeMessage(msg)
 
+	// Telegram rejects messages over 4096 runes. The plain-text fallback already
+	// truncates; cap here too so a long formatted event is not lost outright.
+	const maxTelegramText = 4096
+	if runes := []rune(msg); len(runes) > maxTelegramText {
+		msg = string(runes[:maxTelegramText-1]) + "…"
+	}
+
 	var threadID int64
 	if hookID != 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)

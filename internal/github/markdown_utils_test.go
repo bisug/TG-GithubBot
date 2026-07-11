@@ -159,3 +159,29 @@ func TestFormatReleaseBody(t *testing.T) {
 		}
 	})
 }
+
+// An unescaped link anchor (e.g. a "." in "release.v2") makes Telegram's MarkdownV2
+// parser reject the whole message, forcing a plain-text fallback that drops all styling.
+func TestFormatTextWithMarkdownEscapesLinkAnchor(t *testing.T) {
+	in := "See [release.v2.1](https://github.com/o/r/releases/tag/v2.1) for details."
+	want := "See [release\\.v2\\.1](https://github.com/o/r/releases/tag/v2.1) for details\\."
+	if got := FormatTextWithMarkdown(in); got != want {
+		t.Fatalf("FormatTextWithMarkdown() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatTextWithMarkdownKeepsCodeVerbatim(t *testing.T) {
+	in := "Run `go test ./...` and check `a.b` inline."
+	want := "Run `go test ./...` and check `a.b` inline\\."
+	if got := FormatTextWithMarkdown(in); got != want {
+		t.Fatalf("code spans should pass through unchanged, got %q", got)
+	}
+}
+
+func TestFormatTextWithMarkdownEscapesBodySpecials(t *testing.T) {
+	in := "Fix a.b and call me (soon)! Use ~strike~."
+	want := "Fix a\\.b and call me \\(soon\\)\\! Use \\~strike\\~\\."
+	if got := FormatTextWithMarkdown(in); got != want {
+		t.Fatalf("FormatTextWithMarkdown() = %q, want %q", got, want)
+	}
+}
