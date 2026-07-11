@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github-webhook/internal/bot/ui"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
@@ -152,6 +153,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	msg, markup := s.formatMessage(event)
+	markup = s.withPRActionButtons(event, markup)
 	if msg == "" {
 		log.Printf("Webhook skipped: empty formatted message event=%s delivery=%s chat=%d elapsed=%s", eventType, deliveryID, chatID, time.Since(receivedAt).Round(time.Millisecond))
 		return
@@ -283,6 +285,51 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	}
 
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
+}
+
+// prActionTarget returns the owner, repo and PR number for events that support
+// inline PR actions (approve/close). ok is false for unsupported events.
+func prActionTarget(event interface{}) (owner, repo string, prNum int, ok bool) {
+	switch e := event.(type) {
+	case *github.PullRequestEvent:
+		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
+	case *github.PullRequestReviewEvent:
+		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
+	case *github.PullRequestReviewCommentEvent:
+		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
+	case *github.PullRequestTargetEvent:
+		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
+	}
+	return "", "", 0, false
+}
+
+// withPRActionButtons appends Approve/Close inline buttons to PR notifications and
+// stores the corresponding action context so the callback handler can resolve it.
+func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.InlineKeyboardMarkup) *gotgbot.InlineKeyboardMarkup {
+	owner, repo, prNum, ok := prActionTarget(event)
+	if !ok {
+		return markup
+	}
+
+	id, err := GenerateState()
+	if err != nil {
+		log.Printf("Failed to generate PR action id for %s/%s#%d: %v", owner, repo, prNum, err)
+		return markup
+	}
+
+	s.ActionCache.Set(id, models.PRActionContext{Owner: owner, Repo: repo, PRNumber: prNum}, 48*time.Hour)
+
+	row := []gotgbot.InlineKeyboardButton{
+		ui.Callback("✅ Approve", "act:approve:"+id, ui.WithStyle(ui.StyleSuccess)),
+		ui.Callback("🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
+	}
+
+	if markup == nil {
+		return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}}
+	}
+
+	markup.InlineKeyboard = append(markup.InlineKeyboard, row)
+	return markup
 }
 
 func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *gotgbot.InlineKeyboardMarkup) {

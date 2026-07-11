@@ -48,7 +48,7 @@ func run() (runErr error) {
 	}
 	databaseClosed := false
 	defer func() {
-		if databaseClosed {
+		if database == nil || databaseClosed {
 			return
 		}
 
