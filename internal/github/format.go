@@ -1117,7 +1117,10 @@ func FormatPullRequestReviewThreadEvent(e *github.PullRequestReviewThreadEvent) 
 		FormatUser(sender.GetLogin()),
 	)
 
-	return FormatMessageWithButton(msg, "View Thread", e.GetThread().Comments[0].GetHTMLURL())
+	if thread := e.GetThread(); thread != nil && len(thread.Comments) > 0 {
+		return FormatMessageWithButton(msg, "View Thread", thread.Comments[0].GetHTMLURL())
+	}
+	return msg, nil
 }
 
 func FormatPullRequestTargetEvent(e *github.PullRequestTargetEvent) (string, *gotgbot.InlineKeyboardMarkup) {
