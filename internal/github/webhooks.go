@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -93,7 +92,17 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Webhook received event=%s delivery=%s hook_id=%s chat=%d remote=%s", eventType, deliveryID, hookIDHeader, chatID, r.RemoteAddr)
 
-	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
+	// Read and validate the body exactly once. ValidatePayloadFromBody consumes
+	// r.Body and returns the payload; it verifies the GitHub HMAC signature only
+	// when a secret (or a signature header) is present, so the dev-mode path with
+	// no secret and no signature still yields the real payload. The previous code
+	// called ValidatePayload (which drains the body) and then tried io.ReadAll on
+	// the now-empty body in the no-secret branch, producing an empty payload.
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if sig == "" {
+		sig = r.Header.Get("X-Hub-Signature")
+	}
+	payload, err := github.ValidatePayloadFromBody(r.Header.Get("Content-Type"), r.Body, sig, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
@@ -103,14 +112,12 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if s.Config.GitHubWebhookSecret == "" {
-			log.Printf("Webhook Warning: No GITHUB_WEBHOOK_SECRET configured. Validation skipped. event=%s chat=%d", eventType, chatID)
-			body, _ := io.ReadAll(r.Body)
-			payload = body
+			log.Printf("Webhook REJECTED: signature present but GITHUB_WEBHOOK_SECRET is empty; cannot verify. event=%s delivery=%s chat=%d error=%v", eventType, deliveryID, chatID, err)
 		} else {
 			log.Printf("Webhook REJECTED: Signature mismatch. This means the secret in GitHub doesn't match GITHUB_WEBHOOK_SECRET on Render. event=%s delivery=%s chat=%d error=%v", eventType, deliveryID, chatID, err)
-			http.Error(w, "Invalid signature", http.StatusUnauthorized)
-			return
 		}
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
 	}
 
 	event, err := parseWebhookEvent(eventType, payload)
@@ -352,8 +359,9 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *gotgbot.InlineKeyboardMarkup) {
 	defer func() {
-		if recover() != nil {
-			msg, markup = FormatGenericEvent(event)
+		if r := recover(); r != nil {
+			log.Printf("Formatter panic for event %T: %v", event, r)
+			msg, markup = "", nil
 		}
 	}()
 
