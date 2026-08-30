@@ -422,6 +422,8 @@ func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *go
 		return FormatCustomPropertyEvent(e)
 	case *github.CustomPropertyValuesEvent:
 		return FormatCustomPropertyValuesEvent(e)
+	case *github.CodeScanningAlertEvent:
+		return FormatCodeScanningAlertEvent(e)
 	case *github.DependabotAlertEvent:
 		return FormatDependabotAlertEvent(e)
 	case *github.DeploymentProtectionRuleEvent:

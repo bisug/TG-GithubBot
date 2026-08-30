@@ -1345,6 +1345,28 @@ func FormatDiscussionEvent(e *github.DiscussionEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg, "View Discussion", discussion.GetHTMLURL())
 }
 
+func FormatCodeScanningAlertEvent(e *github.CodeScanningAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+	action := e.GetAction()
+	alert := e.GetAlert()
+	repo := e.GetRepo()
+	sender := e.GetSender()
+
+	msg := fmt.Sprintf(
+		"🛡️ *Code Scanning Alert %s*\n\n"+
+			"*Repository:* %s\n"+
+			"*Rule:* %s\n"+
+			"*Severity:* %s\n"+
+			"*By:* %s\n",
+		EscapeMarkdownV2(action),
+		FormatRepo(repo.GetFullName()),
+		EscapeMarkdownV2(alert.GetRule().GetDescription()),
+		EscapeMarkdownV2(alert.GetRuleSeverity()),
+		FormatUser(sender.GetLogin()),
+	)
+
+	return FormatMessageWithButton(msg, "View Alert", alert.GetHTMLURL())
+}
+
 func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	action := e.GetAction()
 	alert := e.GetAlert()
