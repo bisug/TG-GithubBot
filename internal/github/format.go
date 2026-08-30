@@ -467,7 +467,16 @@ func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboa
 	)
 
 	if action == "edited" && event.Changes != nil {
-		msg += fmt.Sprintf("\n*Changes:* %v", event.Changes)
+		// Only permission/role changes exist on this event; render them explicitly
+		// instead of dumping the raw struct (which breaks MarkdownV2).
+		if p := event.Changes.Permission; p != nil {
+			msg += fmt.Sprintf("\n*Permission:* %s → %s",
+				EscapeMarkdownV2(p.GetFrom()), EscapeMarkdownV2(p.GetTo()))
+		}
+		if r := event.Changes.RoleName; r != nil {
+			msg += fmt.Sprintf("\n*Role:* %s → %s",
+				EscapeMarkdownV2(r.GetFrom()), EscapeMarkdownV2(r.GetTo()))
+		}
 	}
 
 	return FormatMessageWithButton(msg, "View Repository", event.Repo.GetHTMLURL())
@@ -838,7 +847,10 @@ func FormatRepositoryDispatchEvent(e *github.RepositoryDispatchEvent) (string, *
 	action := e.GetAction()
 	branch := e.Branch
 	if branch == nil {
-		branch = e.Repo.MasterBranch
+		// e.Repo may be nil in malformed payloads; GetMasterBranch is nil-safe.
+		if mb := e.GetRepo().GetMasterBranch(); mb != "" {
+			branch = &mb
+		}
 	}
 
 	var payloadStr string
@@ -1459,7 +1471,9 @@ func FormatCustomPropertyValuesEvent(e *github.CustomPropertyValuesEvent) (strin
 
 	var props []string
 	for _, p := range e.NewPropertyValues {
-		props = append(props, fmt.Sprintf("`%s`: `%s`", p.PropertyName, p.Value))
+		// p.Value is `any`; render via fmt and escape so arbitrary values cannot
+		// break MarkdownV2 parsing.
+		props = append(props, fmt.Sprintf("`%s`: `%s`", EscapeMarkdownV2(p.PropertyName), EscapeMarkdownV2(fmt.Sprintf("%v", p.Value))))
 	}
 
 	msg := fmt.Sprintf(
@@ -1541,7 +1555,7 @@ func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyb
 		msg += fmt.Sprintf("*Status:* %s\n", EscapeMarkdownV2(status))
 
 		if e.Build.Error != nil {
-			msg += fmt.Sprintf("*Error:* %v\n", EscapeMarkdownV2(fmt.Sprintf("%v", *e.Build.Error)))
+			msg += fmt.Sprintf("*Error:* %s\n", EscapeMarkdownV2(e.Build.Error.GetMessage()))
 		}
 	}
 

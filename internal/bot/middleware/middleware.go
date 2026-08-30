@@ -16,6 +16,12 @@ import (
 // every 10 minutes instead of on every incoming update.
 var chatUpsertSeen = cache.New[int64, struct{}]()
 
+// CleanupChatUpsertSeen sweeps expired debounce entries so the cache does not grow
+// unbounded for chats that never message the bot again. Called from the main ticker.
+func CleanupChatUpsertSeen() {
+	chatUpsertSeen.Cleanup()
+}
+
 func TrackUserAndChat(database *db.DB) func(b *gotgbot.Bot, ctx *ext.Context) error {
 	return func(b *gotgbot.Bot, ctx *ext.Context) error {
 		if ctx.EffectiveChat != nil {

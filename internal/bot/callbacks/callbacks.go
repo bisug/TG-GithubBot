@@ -111,6 +111,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 
 	if len(parts) < 2 {
 		log.Printf("Ignoring malformed callback data: %q", data)
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 		return nil
 	}
 
@@ -124,6 +125,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 		if action == cbAddRepo {
 			if len(parts) < 4 {
 				log.Printf("Ignoring malformed add-repo callback data: %q", data)
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 				return nil
 			}
 			subAction := parts[2]
@@ -139,6 +141,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 
 		if len(parts) < 3 {
 			log.Printf("Ignoring malformed settings callback data: %q", data)
+			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 			return nil
 		}
 
@@ -172,6 +175,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			}
 			repoParts := strings.Split(link.RepoFullName, "/")
 			if len(repoParts) != 2 {
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 				return nil
 			}
 			owner, repoName := repoParts[0], repoParts[1]
@@ -229,6 +233,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			// c:presets:linkID:mode
 			// mode: push, all
 			if len(parts) < 4 {
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 				return nil
 			}
 			mode := parts[3]
@@ -244,6 +249,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 		}
 	}
 
+	_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown request."})
 	return nil
 }
 
@@ -362,6 +368,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 	repoParts := strings.Split(l.RepoFullName, "/")
 	if len(repoParts) != 2 {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil
 	}
 	owner, repoName := repoParts[0], repoParts[1]
@@ -382,6 +389,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	case "all":
 		newEvents = []string{"*"}
 	default:
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown preset."})
 		return nil
 	}
 
@@ -446,6 +454,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	}
 	parts := strings.Split(l.RepoFullName, "/")
 	if len(parts) != 2 {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil
 	}
 	owner, repoName := parts[0], parts[1]
@@ -647,6 +656,9 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	}
 
 	log.Printf("Webhook test delivery requested for %s hook_id=%d", repo.GetFullName(), webhookID)
+	if err := github.TriggerRepositoryHookTest(context.Background(), client, repo.GetOwner().GetLogin(), repo.GetName(), webhookID); err != nil {
+		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", repo.GetFullName(), webhookID, err)
+	}
 
 	// Reuse showRepoMenu to let user choose notifications immediately
 	kb := h.repoMenuButtons(&link)
@@ -703,6 +715,7 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	parts := strings.Split(data, ":") // act:approve:uuid
 
 	if len(parts) != 3 {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 		return nil
 	}
 
@@ -742,6 +755,9 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 		state := "closed"
 		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: &state})
 		msg = "Closed!"
+	default:
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown action."})
+		return nil
 	}
 
 	if err != nil {

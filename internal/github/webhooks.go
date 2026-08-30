@@ -37,7 +37,7 @@ type WebhookServer struct {
 	Bot          *gotgbot.Bot
 	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
 	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
-	DeliverySeen *cache.Cache[string, struct{}]                // Key: X-GitHub-Delivery (idempotency)
+	DeliverySeen *cache.Cache[string, struct{}]               // Key: X-GitHub-Delivery (idempotency)
 	Wg           sync.WaitGroup
 }
 
@@ -304,6 +304,14 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 			IssueNumber: e.GetPullRequest().GetNumber(),
 			CommentID:   e.GetComment().GetID(),
 			Type:        "pr_review_comment",
+		}
+	case *github.PullRequestTargetEvent:
+		// withPRActionButtons covers this event, so keep reply context consistent.
+		ctx = models.MessageContext{
+			Owner:       e.GetRepo().GetOwner().GetLogin(),
+			Repo:        e.GetRepo().GetName(),
+			IssueNumber: e.GetPullRequest().GetNumber(),
+			Type:        "pr",
 		}
 	default:
 		return

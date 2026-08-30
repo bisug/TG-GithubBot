@@ -1,9 +1,5 @@
 package models
 
-import (
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
-
 // User represents a Telegram user linked to a GitHub account
 type User struct {
 	ID                  int64    `bson:"_id" json:"telegram_id"`
@@ -26,15 +22,6 @@ type Chat struct {
 	ChatType string     `bson:"chat_type" json:"chat_type"`
 	Title    string     `bson:"title" json:"title"`
 	Links    []RepoLink `bson:"links" json:"links"`
-}
-
-// Repository represents a GitHub repository where the App is installed
-type Repository struct {
-	ID             bson.ObjectID `bson:"_id,omitempty"`
-	Owner          string        `bson:"owner" json:"owner"`
-	Name           string        `bson:"name" json:"name"`
-	FullName       string        `bson:"full_name" json:"full_name"`
-	InstallationID int64         `bson:"installation_id" json:"installation_id"`
 }
 
 // PRActionContext stores metadata for PR actions to avoid large callback payloads

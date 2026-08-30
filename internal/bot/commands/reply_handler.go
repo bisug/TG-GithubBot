@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github-webhook/internal/cache"
@@ -70,7 +71,7 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if err != nil {
-		fmt.Printf("Failed to post comment to %s/%s#%d: %v\n", mContext.Owner, mContext.Repo, mContext.IssueNumber, err)
+		log.Printf("Failed to post comment to %s/%s#%d: %v", mContext.Owner, mContext.Repo, mContext.IssueNumber, err)
 		return nil
 	}
 

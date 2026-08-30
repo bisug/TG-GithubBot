@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/go-github/v85/github"
@@ -16,7 +17,7 @@ const clientIdleTTL = 30 * time.Minute
 
 type cachedClient struct {
 	client   *github.Client
-	lastUsed time.Time
+	lastUsed atomic.Int64 // unix nanos; atomic because GetUserClient is called concurrently
 }
 
 type ClientFactory struct {
@@ -33,22 +34,24 @@ func NewClientFactory() *ClientFactory {
 func (f *ClientFactory) GetUserClient(ctx context.Context, accessToken string) *github.Client {
 	if v, ok := f.clients.Load(accessToken); ok {
 		cc := v.(*cachedClient)
-		cc.lastUsed = time.Now()
+		cc.lastUsed.Store(time.Now().UnixNano())
 		return cc.client
 	}
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken})
 	c := github.NewClient(oauth2.NewClient(ctx, ts))
-	f.clients.Store(accessToken, &cachedClient{client: c, lastUsed: time.Now()})
+	cc := &cachedClient{client: c}
+	cc.lastUsed.Store(time.Now().UnixNano())
+	f.clients.Store(accessToken, cc)
 	return c
 }
 
 // Cleanup drops clients that have not been used within clientIdleTTL. Safe to call
 // periodically; in-flight requests on an evicted client are unaffected.
 func (f *ClientFactory) Cleanup() {
-	now := time.Now()
+	now := time.Now().UnixNano()
 	f.clients.Range(func(key, value any) bool {
-		if now.Sub(value.(*cachedClient).lastUsed) > clientIdleTTL {
+		if now-value.(*cachedClient).lastUsed.Load() > int64(clientIdleTTL) {
 			f.clients.Delete(key)
 		}
 		return true

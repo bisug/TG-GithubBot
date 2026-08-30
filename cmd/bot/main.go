@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"github-webhook/internal/bot/middleware"
+	"html"
 	"log"
 	"log/slog"
 	"net"
@@ -175,12 +175,14 @@ func run() (runErr error) {
 			token, err := oauth.ExchangeCode(ctx, code)
 			if err != nil {
 				log.Printf("OAuth exchange failed for %d: %v", telegramID, err)
+				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed during token exchange. Please run /connect again.", nil)
 				return
 			}
 
 			encToken, err := utils.Encrypt(token.AccessToken, cfg.EncryptionKey)
 			if err != nil {
 				log.Printf("OAuth encrypt failed for %d: %v", telegramID, err)
+				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed while securing your token. Please run /connect again.", nil)
 				return
 			}
 
@@ -188,6 +190,7 @@ func run() (runErr error) {
 			u, _, err := ghClient.Users.Get(ctx, "")
 			if err != nil {
 				log.Printf("OAuth fetch user failed for %d: %v", telegramID, err)
+				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed while fetching your profile. Please run /connect again.", nil)
 				return
 			}
 
@@ -295,8 +298,18 @@ func run() (runErr error) {
 		if err != nil {
 			log.Printf("ERROR: Failed to set Telegram webhook: %v. Falling back to polling...", err)
 			go func() {
-				if err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true}); err != nil {
-					log.Printf("FATAL: Polling fallback failed: %v", err)
+				for {
+					err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true})
+					if err == nil {
+						return
+					}
+					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
+						log.Printf("Polling conflict detected (expected during deploy), retrying in 2s...")
+						time.Sleep(2 * time.Second)
+						continue
+					}
+					log.Printf("Polling fallback failed: %v. Retrying in 5s...", err)
+					time.Sleep(5 * time.Second)
 				}
 			}()
 		} else {
@@ -323,6 +336,7 @@ func run() (runErr error) {
 				actionCache.Cleanup()
 				webhookServer.DeliverySeen.Cleanup()
 				clientFactory.Cleanup()
+				middleware.CleanupChatUpsertSeen()
 			}
 		}
 	}()

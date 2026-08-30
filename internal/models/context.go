@@ -1,7 +1,5 @@
 package models
 
-import "time"
-
 // MessageContext stores the GitHub context associated with a Telegram message ID
 type MessageContext struct {
 	Owner       string
@@ -9,9 +7,4 @@ type MessageContext struct {
 	IssueNumber int
 	CommentID   int64
 	Type        string
-}
-
-type OAuthState struct {
-	TelegramID int64
-	CreatedAt  time.Time
 }
