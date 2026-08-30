@@ -13,11 +13,11 @@ import (
 // existing documents) and the document must be valid BSON.
 func TestBuildUserUpsertShape(t *testing.T) {
 	update := buildUserUpsert(&models.User{
-		ID:                 42,
-		GitHubUserID:       7,
-		GitHubUsername:     "alice",
+		ID:                  42,
+		GitHubUserID:        7,
+		GitHubUsername:      "alice",
 		EncryptedOAuthToken: "enc",
-		Scopes:             []string{"repo"},
+		Scopes:              []string{"repo"},
 	})
 
 	if _, ok := update["$set"]; !ok {

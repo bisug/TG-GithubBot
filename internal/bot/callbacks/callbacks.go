@@ -21,7 +21,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	gh "github.com/google/go-github/v85/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 type CallbackHandler struct {
@@ -287,7 +287,8 @@ func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *mode
 	kb := h.repoMenuButtons(l)
 	kb = append(kb, ui.Row(ui.BackButton(cb(cbPrefixSettings, cbListRepos))))
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName),
 		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})
@@ -306,7 +307,8 @@ func (h *CallbackHandler) showStopNotificationsConfirm(b *gotgbot.Bot, ctx *ext.
 		)),
 	)
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName),
 		ReplyMarkup: kb,
 	})
 	return err
@@ -346,7 +348,10 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 		return nil
 	}
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Notifications stopped for <b>%s</b>.%s", l.RepoFullName, warning), &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:      fmt.Sprintf("Notifications stopped for <b>%s</b>.%s", l.RepoFullName, warning),
+		ParseMode: "HTML",
+	})
 	return err
 }
 
@@ -417,7 +422,8 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 
 	kb := ui.Markup(ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        responseText,
 		ReplyMarkup: kb,
 		ParseMode:   "HTML",
 	})
@@ -428,9 +434,9 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
 		if errors.Is(err, github.ErrUnauthorized) {
-			_, _, _ = ctx.EffectiveMessage.EditText(b, "Error: You must be connected to GitHub to view/edit settings.", nil)
+			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error: You must be connected to GitHub to view/edit settings."})
 		} else {
-			_, _, _ = ctx.EffectiveMessage.EditText(b, "Auth error. Please reconnect.", nil)
+			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Auth error. Please reconnect."})
 		}
 		return nil
 	}
@@ -446,7 +452,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Error fetching webhook settings from GitHub. Check permissions.", nil)
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error fetching webhook settings from GitHub. Check permissions."})
 		return nil
 	}
 
@@ -498,7 +504,8 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	)))
 	kb = append(kb, ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName),
 		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
@@ -511,7 +518,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if len(links) == 0 {
-		_, _, err = ctx.EffectiveMessage.EditText(b, "No repositories linked. Use /addrepo first.", nil)
+		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "No repositories linked. Use /addrepo first."})
 		return err
 	}
 
@@ -520,7 +527,8 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 		kb = append(kb, ui.Row(ui.RepoSettingsButton(l.RepoFullName, cbRepo(cbRepoMenu, &l))))
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, "Select a repository to configure:", &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        "Select a repository to configure:",
 		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
@@ -555,7 +563,8 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 		kb = append(kb, navRow)
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Select a repository to add (Page %d):", page),
 		ReplyMarkup: ui.Markup(kb...),
 	})
 
@@ -603,7 +612,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 			return nil
 		}
 		msg := fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr)
-		_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: msg, ParseMode: "HTML"})
 		return err
 	}
 
@@ -629,7 +638,8 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	kb := h.repoMenuButtons(&link)
 
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", repo.GetFullName())
-	_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        msg,
 		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})

@@ -8,7 +8,7 @@ import (
 	"github-webhook/internal/db"
 	"github-webhook/internal/utils"
 
-	"github.com/google/go-github/v85/github"
+	"github.com/google/go-github/v90/github"
 )
 
 // ErrUnauthorized is returned by GetClientForUser when the user has no linked GitHub

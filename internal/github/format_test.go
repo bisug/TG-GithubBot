@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	gh "github.com/google/go-github/v85/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 func TestFormatPushEventIncludesZeroCommitBranchChanges(t *testing.T) {

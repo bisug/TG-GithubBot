@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	gh "github.com/google/go-github/v85/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 type GenericWebhookEvent struct {

@@ -6,8 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/go-github/v85/github"
-	"golang.org/x/oauth2"
+	"github.com/google/go-github/v90/github"
 )
 
 // clientIdleTTL bounds how long an unused authenticated client is kept. The cache is
@@ -29,17 +28,21 @@ func NewClientFactory() *ClientFactory {
 }
 
 // GetUserClient returns a GitHub client authenticated as a specific User (via OAuth token).
-// Clients are cached per access token to reuse the underlying TCP connection and avoid
-// rebuilding the oauth2 transport on every call.
-func (f *ClientFactory) GetUserClient(ctx context.Context, accessToken string) *github.Client {
+// Clients are cached per access token to reuse the underlying TCP connections.
+func (f *ClientFactory) GetUserClient(_ context.Context, accessToken string) *github.Client {
 	if v, ok := f.clients.Load(accessToken); ok {
 		cc := v.(*cachedClient)
 		cc.lastUsed.Store(time.Now().UnixNano())
 		return cc.client
 	}
 
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken})
-	c := github.NewClient(oauth2.NewClient(ctx, ts))
+	c, err := github.NewClient(github.WithAuthToken(accessToken))
+	if err != nil {
+		// WithAuthToken only fails on an empty token, which callers never pass.
+		// ponytail: cache a best-effort client rather than complicating the
+		// factory signature; upgrade path is returning an error from GetUserClient.
+		c, _ = github.NewClient()
+	}
 	cc := &cachedClient{client: c}
 	cc.lastUsed.Store(time.Now().UnixNano())
 	f.clients.Store(accessToken, cc)
