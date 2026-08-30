@@ -285,40 +285,29 @@ func callbackLinkID(l *models.RepoLink) string {
 
 func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
 	kb := h.repoMenuButtons(l)
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.Callback("Back", cb(cbPrefixSettings, cbListRepos),
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconBack),
-		),
-	})
+	kb = append(kb, ui.Row(ui.BackButton(cb(cbPrefixSettings, cbListRepos))))
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})
 	return err
 }
 
 func (h *CallbackHandler) showStopNotificationsConfirm(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
-	kb := [][]gotgbot.InlineKeyboardButton{
-		{
-			ui.Callback("Stop notifications", cbRepo(cbStopConfirm, l),
-				ui.WithStyle(ui.StyleDanger),
-				ui.WithCustomEmojiEnv(ui.IconConfirm),
-			),
-		},
-		{
-			ui.Callback("Cancel", cbRepo(cbRepoMenu, l),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconCancel),
-			),
-		},
-	}
+	kb := ui.Markup(
+		ui.Row(ui.Callback("Stop notifications", cbRepo(cbStopConfirm, l),
+			ui.WithStyle(ui.StyleDanger),
+			ui.WithCustomEmojiEnv(ui.IconConfirm),
+		)),
+		ui.Row(ui.Callback("Cancel", cbRepo(cbRepoMenu, l),
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconCancel),
+		)),
+	)
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName), &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
-		ParseMode:   "HTML",
+		ReplyMarkup: kb,
 	})
 	return err
 }
@@ -426,17 +415,10 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		responseText += "\n\nWebhook URL and secret repaired. GitHub ping delivery requested; you should receive a ping notification shortly."
 	}
 
-	kb := [][]gotgbot.InlineKeyboardButton{
-		{
-			ui.Callback("Back", cbRepo(cbRepoMenu, l),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconBack),
-			),
-		},
-	}
+	kb := ui.Markup(ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: kb,
 		ParseMode:   "HTML",
 	})
 	return err
@@ -510,21 +492,14 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	}
 
 	webhookSettingsURL := fmt.Sprintf("https://github.com/%s/%s/settings/hooks/%d", owner, repoName, l.WebhookID)
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.URL("Edit more on GitHub", webhookSettingsURL,
-			ui.WithStyle(ui.StylePrimary),
-			ui.WithCustomEmojiEnv(ui.IconGitHub),
-		),
-	})
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{ui.Callback("Back", cbRepo(cbRepoMenu, l),
+	kb = append(kb, ui.Row(ui.URL("Edit more on GitHub", webhookSettingsURL,
 		ui.WithStyle(ui.StylePrimary),
-		ui.WithCustomEmojiEnv(ui.IconBack),
-	)})
+		ui.WithCustomEmojiEnv(ui.IconGitHub),
+	)))
+	kb = append(kb, ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
-		ParseMode:   "HTML",
+		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
 }
@@ -542,16 +517,11 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(ui.CompactButtonText(l.RepoFullName), cbRepo(cbRepoMenu, &l),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconSettings),
-			),
-		})
+		kb = append(kb, ui.Row(ui.RepoSettingsButton(l.RepoFullName, cbRepo(cbRepoMenu, &l))))
 	}
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, "Select a repository to configure:", &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
 }
@@ -578,12 +548,7 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(ui.CompactButtonText(repo.GetFullName()), cbAddRepoID(repo.GetID()),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconAdd),
-			),
-		})
+		kb = append(kb, ui.Row(ui.AddRepoButton(repo.GetFullName(), cbAddRepoID(repo.GetID()))))
 	}
 
 	if navRow := ui.RepoPageNav(page, resp, cbAddRepoPage); len(navRow) > 0 {
@@ -591,7 +556,7 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 	}
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 	})
 
 	return err
@@ -665,44 +630,31 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", repo.GetFullName())
 	_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})
 	return err
 }
 
 func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.InlineKeyboardButton {
-	var kb [][]gotgbot.InlineKeyboardButton
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.Callback("Push only", cbRepo(cbPresets, l, "push"),
+	return [][]gotgbot.InlineKeyboardButton{
+		ui.Row(ui.Callback("Push only", cbRepo(cbPresets, l, "push"),
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconPush),
-		),
-	})
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.Callback("All events", cbRepo(cbPresets, l, "all"),
+		)),
+		ui.Row(ui.Callback("All events", cbRepo(cbPresets, l, "all"),
 			ui.WithStyle(ui.StyleSuccess),
 			ui.WithCustomEmojiEnv(ui.IconAll),
-		),
-	})
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.Callback("Choose events", cbRepo(cbIndividual, l, "1"),
+		)),
+		ui.Row(ui.Callback("Choose events", cbRepo(cbIndividual, l, "1"),
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconChoose),
-		),
-	})
-
-	kb = append(kb, []gotgbot.InlineKeyboardButton{
-		ui.Callback("Stop notifications", cbRepo(cbStop, l),
+		)),
+		ui.Row(ui.Callback("Stop notifications", cbRepo(cbStop, l),
 			ui.WithStyle(ui.StyleDanger),
 			ui.WithCustomEmojiEnv(ui.IconStop),
-		),
-	})
-
-	return kb
+		)),
+	}
 }
 
 func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error {

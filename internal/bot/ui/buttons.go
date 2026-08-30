@@ -88,11 +88,40 @@ func validateCallback(data string) {
 	}
 }
 
+// Row wraps buttons into a single keyboard row.
+func Row(buttons ...gotgbot.InlineKeyboardButton) []gotgbot.InlineKeyboardButton {
+	return buttons
+}
+
+// Markup wraps keyboard rows into an inline keyboard markup.
+func Markup(rows ...[]gotgbot.InlineKeyboardButton) gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// BackButton returns the standard "Back" button for the given callback data.
+func BackButton(data string) gotgbot.InlineKeyboardButton {
+	return Callback("Back", data, WithStyle(StylePrimary), WithCustomEmojiEnv(IconBack))
+}
+
+// RepoSettingsButton returns the row button that opens a repository's settings menu.
+func RepoSettingsButton(fullName, data string) gotgbot.InlineKeyboardButton {
+	return Callback(CompactButtonText(fullName), data, WithStyle(StylePrimary), WithCustomEmojiEnv(IconSettings))
+}
+
+// AddRepoButton returns the row button that links a repository to the chat.
+func AddRepoButton(fullName, data string) gotgbot.InlineKeyboardButton {
+	return Callback(CompactButtonText(fullName), data, WithStyle(StylePrimary), WithCustomEmojiEnv(IconAdd))
+}
+
 // RepoPageNav builds the previous / numbered / next pagination row for the add-repo
 // repository picker. pageData maps a page number to its callback data string; commands
 // and callbacks pass their own builder so ui stays unaware of the callback protocol.
 func RepoPageNav(page int, resp *gh.Response, pageData func(int) string) []gotgbot.InlineKeyboardButton {
 	var navRow []gotgbot.InlineKeyboardButton
+
+	if resp.PrevPage == 0 && resp.NextPage == 0 {
+		return nil // single page: nothing to navigate
+	}
 
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
 		navRow = append(navRow, Callback("<", pageData(resp.PrevPage),
@@ -107,11 +136,14 @@ func RepoPageNav(page int, resp *gh.Response, pageData func(int) string) []gotgb
 	}
 
 	endPage := page + 1
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-	if resp.LastPage == 0 && resp.NextPage != 0 {
+	if resp.LastPage != 0 {
+		if endPage > resp.LastPage {
+			endPage = resp.LastPage
+		}
+	} else if resp.NextPage != 0 {
 		endPage = resp.NextPage
+	} else {
+		endPage = page // no next/last page known: don't render a phantom page+1 button
 	}
 
 	for i := startPage; i <= endPage; i++ {

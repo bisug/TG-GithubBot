@@ -352,10 +352,10 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 	s.ActionCache.Set(id, models.PRActionContext{Owner: owner, Repo: repo, PRNumber: prNum}, 48*time.Hour)
 
-	row := []gotgbot.InlineKeyboardButton{
+	row := ui.Row(
 		ui.Callback("✅ Approve", "act:approve:"+id, ui.WithStyle(ui.StyleSuccess)),
 		ui.Callback("🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
-	}
+	)
 
 	if markup == nil {
 		return &gotgbot.InlineKeyboardMarkup{InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row}}

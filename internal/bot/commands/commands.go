@@ -106,16 +106,10 @@ func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
 
 func (h *CommandHandler) replyWithConnectButton(b *gotgbot.Bot, ctx *ext.Context, text string, url string) error {
 	_, err := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{
-					ui.URL("Connect GitHub", url,
-						ui.WithStyle(ui.StylePrimary),
-						ui.WithCustomEmojiEnv(ui.IconConnect),
-					),
-				},
-			},
-		},
+		ReplyMarkup: ui.Markup(ui.Row(ui.URL("Connect GitHub", url,
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconConnect),
+		))),
 	})
 	return err
 }
@@ -286,12 +280,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, repo := range repos {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(ui.CompactButtonText(repo.GetFullName()), addRepoIDCallback(repo.GetID()),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconAdd),
-			),
-		})
+		kb = append(kb, ui.Row(ui.AddRepoButton(repo.GetFullName(), addRepoIDCallback(repo.GetID()))))
 	}
 
 	if navRow := ui.RepoPageNav(page, resp, addRepoPageCallback); len(navRow) > 0 {
@@ -299,7 +288,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	}
 
 	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
 }
@@ -321,16 +310,11 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	var kb [][]gotgbot.InlineKeyboardButton
 	for _, l := range links {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			ui.Callback(ui.CompactButtonText(l.RepoFullName), repoSettingsCallback(l),
-				ui.WithStyle(ui.StylePrimary),
-				ui.WithCustomEmojiEnv(ui.IconSettings),
-			),
-		})
+		kb = append(kb, ui.Row(ui.RepoSettingsButton(l.RepoFullName, repoSettingsCallback(l))))
 	}
 
 	_, err = ctx.EffectiveMessage.Reply(b, "Select a repository to configure:", &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
 }
