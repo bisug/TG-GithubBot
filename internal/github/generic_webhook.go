@@ -11,11 +11,10 @@ import (
 
 type GenericWebhookEvent struct {
 	EventType    string
-	Action       string          `json:"action,omitempty"`
-	Repository   *genericEntity  `json:"repository,omitempty"`
-	Organization *genericEntity  `json:"organization,omitempty"`
-	Sender       *genericEntity  `json:"sender,omitempty"`
-	RawPayload   json.RawMessage `json:"-"`
+	Action       string         `json:"action,omitempty"`
+	Repository   *genericEntity `json:"repository,omitempty"`
+	Organization *genericEntity `json:"organization,omitempty"`
+	Sender       *genericEntity `json:"sender,omitempty"`
 }
 
 type genericEntity struct {
@@ -52,7 +51,6 @@ func parseGenericWebhookEvent(eventType string, payload []byte) (*GenericWebhook
 		}
 	}
 	event.EventType = eventType
-	event.RawPayload = append(event.RawPayload[:0], payload...)
 	return &event, nil
 }
 

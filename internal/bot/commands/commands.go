@@ -163,18 +163,8 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
 		return nil
 	}
-	var owner, repo string
-	if n := len(repoFullName); n > 0 {
-		for i := 0; i < n; i++ {
-			if repoFullName[i] == '/' {
-				owner = repoFullName[:i]
-				repo = repoFullName[i+1:]
-				break
-			}
-		}
-	}
-
-	if owner == "" || repo == "" {
+	owner, repo, ok := strings.Cut(repoFullName, "/")
+	if !ok || owner == "" || repo == "" {
 		_, _ = ctx.EffectiveMessage.Reply(b, "Invalid repository format. Use owner/repo", nil)
 		return nil
 	}
@@ -374,25 +364,15 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
 			}
 		} else {
-
-			var owner, repo string
-			for i := 0; i < len(repoFullName); i++ {
-				if repoFullName[i] == '/' {
-					owner = repoFullName[:i]
-					repo = repoFullName[i+1:]
-					break
-				}
-			}
-
-			if owner != "" && repo != "" {
+			owner, repo, ok := strings.Cut(repoFullName, "/")
+			if ok && owner != "" && repo != "" {
 				_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
 				if err != nil {
 					if h.handleAuthError(b, ctx, err) {
 						webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
 					} else {
 						var errResp *github.ErrorResponse
-						if errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
-						} else {
+						if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
 							webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
 						}
 					}

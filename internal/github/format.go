@@ -143,10 +143,7 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 	}
 
 	commitCount := len(commits)
-	var commitPlural string
-	if commitCount > 1 {
-		commitPlural = "s"
-	}
+	commitPlural := pluralSuffix(commitCount)
 	title := fmt.Sprintf("🔨 *%d new commit%s to* `%s:%s`\n\n", commitCount, commitPlural, EscapeMarkdownV2(repo), EscapeMarkdownV2(refName))
 	if commitCount == 0 {
 		title = fmt.Sprintf("🔨 *Push to* `%s:%s`\n\n", EscapeMarkdownV2(repo), EscapeMarkdownV2(refName))
@@ -266,6 +263,21 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
+// emojiOr returns the emoji mapped to key, or fallback when key is unknown.
+func emojiOr(m map[string]string, key, fallback string) string {
+	if e, ok := m[key]; ok && e != "" {
+		return e
+	}
+	return fallback
+}
+
+// commentActionEmoji maps the shared created/edited/deleted comment actions.
+var commentActionEmoji = map[string]string{
+	"created": "💬",
+	"edited":  "✏️",
+	"deleted": "🗑️",
+}
+
 func titleText(text string) string {
 	words := strings.Fields(strings.ReplaceAll(text, "_", " "))
 	for i, word := range words {
@@ -359,15 +371,7 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 	action := event.GetAction()
 	commitURL := fmt.Sprintf("https://github.com/%s/commit/%s", EscapeMarkdownV2URL(repo), EscapeMarkdownV2URL(commitSHA))
 
-	actionEmoji := map[string]string{
-		"created": "💬",
-		"edited":  "✏️",
-		"deleted": "🗑️",
-	}[action]
-
-	if actionEmoji == "" {
-		actionEmoji = "⚠️"
-	}
+	actionEmoji := emojiOr(commentActionEmoji, action, "⚠️")
 
 	msg := fmt.Sprintf(
 		"%s *%s %s comment on commit*\n\n"+
@@ -406,14 +410,7 @@ func FormatIssueCommentEvent(event *github.IssueCommentEvent) (string, *gotgbot.
 	repo := event.Repo.GetFullName()
 	sender := event.Sender.GetLogin()
 
-	actionEmoji := map[string]string{
-		"created": "💬",
-		"edited":  "✏️",
-		"deleted": "🗑️",
-	}[action]
-	if actionEmoji == "" {
-		actionEmoji = "⚠️"
-	}
+	actionEmoji := emojiOr(commentActionEmoji, action, "⚠️")
 
 	msg := fmt.Sprintf(
 		"%s *%s %s comment on* [%s\\#%d](%s)\n\n"+
@@ -585,14 +582,11 @@ func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboard
 
 func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	state := event.GetState()
-	stateEmoji := map[string]string{
+	stateEmoji := emojiOr(map[string]string{
 		"success": "✅",
 		"error":   "❌",
 		"pending": "⏳",
-	}[state]
-	if stateEmoji == "" {
-		stateEmoji = "⚠️"
-	}
+	}, state, "⚠️")
 
 	msg := fmt.Sprintf(
 		"%s *%s for commit* [`%s`](%s)\n\n"+
@@ -893,14 +887,7 @@ func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent
 	comment := e.GetComment()
 	pr := e.GetPullRequest()
 
-	actionEmoji := map[string]string{
-		"created": "💬",
-		"edited":  "✏️",
-		"deleted": "🗑️",
-	}[action]
-	if actionEmoji == "" {
-		actionEmoji = "⚠️"
-	}
+	actionEmoji := emojiOr(commentActionEmoji, action, "⚠️")
 
 	msg := fmt.Sprintf(
 		"%s *PR Review Comment %s*\n\n"+
@@ -923,16 +910,12 @@ func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *go
 	review := e.GetReview()
 	pr := e.GetPullRequest()
 
-	stateEmoji := map[string]string{
+	stateEmoji := emojiOr(map[string]string{
 		"approved":          "✅",
 		"changes_requested": "✏️",
 		"commented":         "💬",
 		"dismissed":         "❌",
-	}[review.GetState()]
-
-	if stateEmoji == "" {
-		stateEmoji = "🔍"
-	}
+	}, review.GetState(), "🔍")
 
 	msg := fmt.Sprintf(
 		"%s *PR Review %s*\n\n"+
@@ -955,28 +938,28 @@ func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *go
 func FormatPingEvent(e *github.PingEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	msg := "🏓 *Webhook Ping Received*\n\n"
 
-	if e.Zen != nil {
-		msg += fmt.Sprintf("🧘 _%s_\n", EscapeMarkdownV2(*e.Zen))
+	if e.GetZen() != "" {
+		msg += fmt.Sprintf("🧘 _%s_\n", EscapeMarkdownV2(e.GetZen()))
 	}
 
-	if e.Repo != nil {
+	if e.GetRepo() != nil {
 		msg += fmt.Sprintf(
 			"📦 %s\n",
-			FormatRepo(*e.Repo.FullName),
+			FormatRepo(e.GetRepo().GetFullName()),
 		)
 	}
 
-	if e.Sender != nil {
-		msg += fmt.Sprintf("👤 *By:* %s\n", FormatUser(*e.Sender.Login))
+	if e.GetSender() != nil {
+		msg += fmt.Sprintf("👤 *By:* %s\n", FormatUser(e.GetSender().GetLogin()))
 	}
 
-	if e.Org != nil {
-		msg += fmt.Sprintf("🏢 *Org:* %s", EscapeMarkdownV2(*e.Org.Login))
+	if e.GetOrg() != nil {
+		msg += fmt.Sprintf("🏢 *Org:* %s", EscapeMarkdownV2(e.GetOrg().GetLogin()))
 	}
 
-	buttonURL := "https://github.com"
-	if e.Repo != nil && e.Repo.HTMLURL != nil {
-		buttonURL = *e.Repo.HTMLURL
+	buttonURL := e.GetRepo().GetHTMLURL()
+	if buttonURL == "" {
+		buttonURL = "https://github.com"
 	}
 
 	return FormatMessageWithButton(msg, "View GitHub", buttonURL)
@@ -1035,7 +1018,7 @@ func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *go
 	action := e.GetAction()
 	repo := e.GetRepository()
 	sender := e.GetSender()
-	ruleset := e.RepositoryRuleset
+	ruleset := e.GetRepositoryRuleset()
 
 	msg := fmt.Sprintf(
 		"📜 *Repository Ruleset %s*\n\n"+
@@ -1044,7 +1027,7 @@ func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *go
 			"*By:* %s\n",
 		EscapeMarkdownV2(action),
 		FormatRepo(repo.GetFullName()),
-		EscapeMarkdownV2(ruleset.Name),
+		EscapeMarkdownV2(ruleset.GetName()),
 		FormatUser(sender.GetLogin()),
 	)
 
@@ -1528,7 +1511,7 @@ func FormatBranchProtectionConfigurationEvent(e *github.BranchProtectionConfigur
 
 func FormatRepositoryVulnerabilityAlertEvent(e *github.RepositoryVulnerabilityAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	alert := e.GetAlert()
-	repo := e.Repository
+	repo := e.GetRepository()
 
 	msg := fmt.Sprintf(
 		"🚨 *Vulnerability Alert: %s*\n\n"+
@@ -1548,26 +1531,22 @@ func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyb
 	msg := "🏗️ *GitHub Pages Build*\n\n"
 
 	if e.Build != nil {
-		status := "unknown"
-		if e.Build.Status != nil {
-			status = *e.Build.Status
-		}
-		msg += fmt.Sprintf("*Status:* %s\n", EscapeMarkdownV2(status))
+		msg += fmt.Sprintf("*Status:* %s\n", EscapeMarkdownV2(e.Build.GetStatus()))
 
-		if e.Build.Error != nil {
+		if e.Build.GetError() != nil {
 			msg += fmt.Sprintf("*Error:* %s\n", EscapeMarkdownV2(e.Build.Error.GetMessage()))
 		}
 	}
 
-	if e.Repo != nil {
+	if e.GetRepo() != nil {
 		msg += fmt.Sprintf(
 			"📦 %s\n",
-			FormatRepo(*e.Repo.FullName),
+			FormatRepo(e.GetRepo().GetFullName()),
 		)
 	}
 
-	if e.Sender != nil {
-		msg += fmt.Sprintf("👤 *By:* %s", FormatUser(*e.Sender.Login))
+	if e.GetSender() != nil {
+		msg += fmt.Sprintf("👤 *By:* %s", FormatUser(e.GetSender().GetLogin()))
 	}
 
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
@@ -1576,19 +1555,19 @@ func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyb
 func FormatPackageEvent(e *github.PackageEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	msg := "📦 *Package Event*\n\n"
 
-	if e.Package != nil && e.Package.Name != nil {
-		msg += fmt.Sprintf("*Package:* %s\n", EscapeMarkdownV2(*e.Package.Name))
+	if name := e.GetPackage().GetName(); name != "" {
+		msg += fmt.Sprintf("*Package:* %s\n", EscapeMarkdownV2(name))
 	}
 
-	if e.Repo != nil && e.Repo.Name != nil {
+	if e.GetRepo() != nil {
 		msg += fmt.Sprintf(
 			"*Repository:* %s\n",
-			FormatRepo(*e.Repo.FullName),
+			FormatRepo(e.GetRepo().GetFullName()),
 		)
 	}
 
-	if e.Sender != nil && e.Sender.Login != nil {
-		msg += fmt.Sprintf("*By:* %s", FormatUser(*e.Sender.Login))
+	if e.GetSender() != nil {
+		msg += fmt.Sprintf("*By:* %s", FormatUser(e.GetSender().GetLogin()))
 	}
 
 	return FormatMessageWithButton(msg, "View Package", e.GetPackage().GetHTMLURL())

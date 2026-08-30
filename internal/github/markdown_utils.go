@@ -14,6 +14,44 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
+// markdownV2Replacer escapes characters for Telegram's MarkdownV2 format.
+var markdownV2Replacer = strings.NewReplacer(
+	"\\", "\\\\", // Escape backslash first!
+	"_", "\\_",
+	"*", "\\*",
+	"[", "\\[",
+	"]", "\\]",
+	"(", "\\(",
+	")", "\\)",
+	"~", "\\~",
+	"`", "\\`",
+	">", "\\>",
+	"#", "\\#",
+	"+", "\\+",
+	"-", "\\-",
+	"=", "\\=",
+	"|", "\\|",
+	"{", "\\{",
+	"}", "\\}",
+	".", "\\.",
+	"!", "\\!",
+)
+
+// urlReplacer escapes characters for the URL part of a MarkdownV2 link.
+var urlReplacer = strings.NewReplacer(
+	"(", "\\(",
+	")", "\\)",
+)
+
+var (
+	// emailRe matches angle-bracketed emails that must survive HTML conversion.
+	emailRe = regexp.MustCompile(`<[^> ]+@[^> ]+>`)
+	// protectedSegmentRe matches Markdown links, code spans, and fenced blocks.
+	protectedSegmentRe = regexp.MustCompile("(?s)\\[[^\\]]+\\]\\([^\\)]+\\)|`[^`]+`|```.+?```")
+	// linkRe matches a single Markdown link of the form [text](url).
+	linkRe = regexp.MustCompile(`^\[(.+)\]\((.+)\)$`)
+)
+
 // ConvertHTMLToMarkdown converts HTML to Markdown using the html-to-markdown library.
 func ConvertHTMLToMarkdown(html string) string {
 	conv := converter.NewConverter(
@@ -34,44 +72,18 @@ func ConvertHTMLToMarkdown(html string) string {
 
 // EscapeMarkdownV2 escapes characters for Telegram's MarkdownV2 format.
 func EscapeMarkdownV2(text string) string {
-	replacer := strings.NewReplacer(
-		"\\", "\\\\", // Escape backslash first!
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
-		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
-	)
-	return replacer.Replace(text)
+	return markdownV2Replacer.Replace(text)
 }
 
 // EscapeMarkdownV2URL escapes characters for the URL part of a MarkdownV2 link.
 func EscapeMarkdownV2URL(text string) string {
-	replacer := strings.NewReplacer(
-		"(", "\\(",
-		")", "\\)",
-	)
-	return replacer.Replace(text)
+	return urlReplacer.Replace(text)
 }
 
 // FormatTextWithMarkdown preserves Markdown links and code blocks while escaping other special characters.
 // Link anchors are also escaped: an anchor such as "foo.bar" would otherwise break Telegram's
 // MarkdownV2 parser (unescaped ".") and force a plain-text fallback that drops all formatting.
 func FormatTextWithMarkdown(text string) string {
-	emailRe := regexp.MustCompile(`<[^> ]+@[^> ]+>`)
 	var emails []string
 	protectedText := emailRe.ReplaceAllStringFunc(text, func(m string) string {
 		emails = append(emails, m)
@@ -85,10 +97,8 @@ func FormatTextWithMarkdown(text string) string {
 		markdownText = strings.Replace(markdownText, placeholder, email, -1)
 	}
 
-	re := regexp.MustCompile("(?s)\\[[^\\]]+\\]\\([^\\)]+\\)|`[^`]+`|```.+?```")
-
 	var originals []string
-	tempBody := re.ReplaceAllStringFunc(markdownText, func(match string) string {
+	tempBody := protectedSegmentRe.ReplaceAllStringFunc(markdownText, func(match string) string {
 		originals = append(originals, match)
 		return fmt.Sprintf("___PLACEHOLDER_%d___", len(originals)-1)
 	})
@@ -113,7 +123,6 @@ func restoreProtectedSegment(segment string) string {
 }
 
 func parseMarkdownLink(segment string) (text, url string, ok bool) {
-	linkRe := regexp.MustCompile(`^\[(.+)\]\((.+)\)$`)
 	m := linkRe.FindStringSubmatch(segment)
 	if m == nil {
 		return "", "", false
