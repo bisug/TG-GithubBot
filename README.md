@@ -1,64 +1,117 @@
 # TG-GithubBot
 
-TG-GithubBot is a Telegram bot that connects Telegram chats to GitHub repositories. It can create GitHub webhooks, send GitHub activity notifications to Telegram, and let connected GitHub users reply to issues or pull requests directly from Telegram.
+![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-blue)
+![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)
+![MongoDB](https://img.shields.io/badge/DB-MongoDB-47A248?logo=mongodb&logoColor=white)
+
+TG-GithubBot is a self-hosted Telegram bot that links GitHub repositories to Telegram chats. It delivers repository activity as formatted notifications, manages GitHub webhooks automatically, and lets connected users comment on, close, and approve issues and pull requests without leaving Telegram.
+
+### One-Click Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/bisug/TG-GithubBot)
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://www.heroku.com/deploy?template=https://github.com/bisug/TG-GithubBot)
+[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=git&builder=docker&repository=github.com/bisug/TG-GithubBot&branch=master&name=tg-githubbot)
+
+> [!NOTE]
+> One-click deploys still require an external MongoDB (e.g. [MongoDB Atlas](https://www.mongodb.com/atlas)) and a GitHub OAuth App — see [Cloud Platforms](#cloud-platforms-render-heroku-koyeb).
+
+## Table of Contents
+
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [How It Works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Setup](#setup)
+  - [Create the Telegram Bot](#create-the-telegram-bot)
+  - [Create the GitHub OAuth App](#create-the-github-oauth-app)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+  - [Docker Compose](#docker-compose-recommended)
+  - [Reverse Proxy](#reverse-proxy-example-caddy)
+  - [Cloud Platforms](#cloud-platforms-render-heroku-koyeb)
+  - [Local Testing](#local-testing-with-a-tunnel)
+  - [Manual Build](#manual-build)
+- [Usage](#usage)
+  - [First-Time Setup](#first-time-setup)
+  - [Commands](#commands)
+  - [Permissions and Access Model](#permissions-and-access-model)
+- [Supported GitHub Events](#supported-github-events)
+- [Security](#security)
+- [Backups](#backups)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Project Structure](#project-structure)
+- [License](#license)
 
 ## Features
 
-- GitHub event notifications in Telegram chats.
-- GitHub OAuth login with encrypted token storage.
-- Automatic repository webhook creation from Telegram.
-- Repository discovery with inline Telegram buttons.
-- Per-repository event settings.
-- Telegram replies posted back as GitHub issue or pull request comments.
-- Reply commands for issue and PR actions:
-  - `/close`
-  - `/reopen`
-  - `/approve`
-- Admin-only repository management in groups.
-- MongoDB persistence for users, chats, linked repositories, and webhook IDs.
-- Docker Compose deployment with MongoDB included.
+- **Real-time notifications** — pushes, pull requests, issues, CI/CD runs, releases, discussions, and 70+ other GitHub events delivered to Telegram.
+- **GitHub OAuth login** — connect accounts with encrypted token storage (AES-256-GCM).
+- **Automatic webhook management** — repository webhooks are created, updated, and removed from Telegram.
+- **Repository discovery** — browse and link repositories with inline buttons.
+- **Per-repository event settings** — choose exactly which events each chat receives.
+- **Two-way interaction** — reply to notifications to comment on issues and PRs; use `/close`, `/reopen`, and `/approve` for quick actions.
+- **Group-friendly** — admin-only repository management in group chats.
+- **Persistent state** — MongoDB storage for users, chats, linked repositories, and webhook IDs.
+- **Easy deployment** — Docker Compose with MongoDB included, plus blueprints for Render, Heroku, and Koyeb.
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+| :--- | :--- | :--- |
+| Language | [![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)](https://go.dev) | Core application runtime. |
+| Telegram framework | [![gotgbot](https://img.shields.io/badge/gotgbot-v2-26A5E4?logo=telegram&logoColor=white)](https://github.com/PaulSonOfLars/gotgbot) | Bot API client, commands, inline keyboards, long polling and webhooks. |
+| GitHub API | [![go-github](https://img.shields.io/badge/go--github-v90-181717?logo=github&logoColor=white)](https://github.com/google/go-github) | Repository discovery, webhook management, issue/PR actions. |
+| OAuth 2.0 | [![OAuth](https://img.shields.io/badge/OAuth-2.0-4285F4?logo=oauth&logoColor=white)](https://pkg.go.dev/golang.org/x/oauth2) | GitHub OAuth login flow. |
+| Database | [![MongoDB](https://img.shields.io/badge/MongoDB-driver_v2-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com) | Persistence for users, chats, repo links, and webhook IDs. |
+| Encryption | [![x/crypto](https://img.shields.io/badge/x--crypto-AES--256--GCM-00ADD8?logo=go&logoColor=white)](https://pkg.go.dev/golang.org/x/crypto) | Encrypting OAuth tokens at rest. |
+| Formatting | [![html-to-markdown](https://img.shields.io/badge/html--to--markdown-v2-2088D1?logo=markdown&logoColor=white)](https://github.com/JohannesKaufmann/html-to-markdown) | Converting GitHub HTML content to Telegram MarkdownV2. |
+| Config | [![godotenv](https://img.shields.io/badge/godotenv-1.5.1-8DD6F9?logo=dotenv&logoColor=black)](https://github.com/joho/godotenv) | Loading `.env` files. |
+| Deployment | [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com) | Containerized deployment with bundled MongoDB. |
+| CI | [![GitHub Actions](https://img.shields.io/badge/GitHub-Actions-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions) | Formatting checks, build, vet, and tests. |
 
 ## How It Works
 
-This bot uses a flexible, platform-agnostic architecture:
+- **Telegram updates** — received via long polling (`USE_POLLING=true`, recommended for cloud platforms and local development) or Telegram webhooks (`USE_POLLING=false`, recommended for a dedicated VPS).
+- **GitHub activity** — always delivered via repository webhooks for real-time performance.
+- **Security** — every GitHub payload is validated against an HMAC signature (`GITHUB_WEBHOOK_SECRET`).
 
-- **Telegram Commands**: The bot can receive commands via **Webhooks** (recommended for production VPS) or **Long Polling** (recommended for Cloud Web Services like Render/Heroku or local development). Switch modes using the `USE_POLLING` environment variable.
-- **GitHub Activity**: Repository notifications are received via **Webhooks** for maximum performance.
-- **Security**: All GitHub payloads are validated with a cryptographic signature (`GITHUB_WEBHOOK_SECRET`).
-
-The `TELEGRAM_WEBHOOK_URL` is the public base URL used for GitHub OAuth, GitHub Webhooks, and (optionally) Telegram Webhooks.
+`TELEGRAM_WEBHOOK_URL` is the public HTTPS base URL of the bot. It is used for the GitHub OAuth callback and GitHub webhook delivery, and for Telegram webhooks when polling is disabled. It must be reachable by GitHub even in polling mode.
 
 > [!IMPORTANT]
-> When `USE_POLLING=false` (default), the bot automatically registers its webhook with Telegram at startup. If you switch from Webhook to Polling mode, you may need to manually delete the webhook via the Telegram API if updates stop arriving.
-
-## Supported GitHub Events
-
-The bot supports a wide range of repository events. For a full technical list of compatible events, see the `internal/github/format.go` file. Common events include:
-
-- **Push / Commit Activity**
-- **Pull Requests** (Open, Close, Review, Approve)
-- **Issues** (Open, Close, Comment)
-- **Workflow Runs** (CI/CD Success/Failure)
-- **Discussions** and **Releases**
+> When `USE_POLLING=false`, the bot registers its Telegram webhook at startup. If you later switch to polling, you may need to delete the webhook manually via the Telegram API before updates arrive.
 
 ## Requirements
 
-- Go 1.26.3 or newer for manual builds.
-- Docker and Docker Compose for recommended deployment.
-- A Telegram bot token from [@BotFather](https://t.me/BotFather).
-- A GitHub OAuth App.
-- A public HTTPS URL for the bot.
-- MongoDB. Docker Compose starts MongoDB automatically.
+- **Telegram bot token** — from [@BotFather](https://t.me/BotFather).
+- **GitHub OAuth App** — see [Setup](#create-the-github-oauth-app).
+- **Public HTTPS URL** — required for GitHub webhooks and the OAuth callback.
+- **MongoDB** — any instance; Docker Compose includes one.
+- **Docker and Docker Compose** — for the recommended deployment.
+- **Go 1.27 or newer** — only for manual builds.
 
-## Create The Telegram Bot
+## Quick Start
+
+```bash
+git clone https://github.com/bisug/TG-GithubBot.git
+cd TG-GithubBot
+cp sample.env .env   # then edit .env — see Configuration
+docker compose up -d --build
+```
+
+Open a private chat with your bot, send `/start`, then `/connect` to link your GitHub account. Full walkthrough: [Usage](#usage).
+
+## Setup
+
+### Create the Telegram Bot
 
 1. Open [@BotFather](https://t.me/BotFather) in Telegram.
-2. Run `/newbot`.
-3. Choose a bot name and username.
-4. Copy the bot token.
-5. Use that token as `TELEGRAM_TOKEN`.
+2. Run `/newbot` and follow the prompts.
+3. Copy the bot token and set it as `TELEGRAM_TOKEN`.
 
-Optional but recommended BotFather settings:
+Optionally register the command list so Telegram autocompletes it:
 
 ```text
 /setcommands
@@ -77,114 +130,77 @@ reopen - Reopen an issue or PR
 approve - Approve a PR
 ```
 
-## Create The GitHub OAuth App
+### Create the GitHub OAuth App
 
-Create an OAuth App in GitHub:
+Create an OAuth App under **GitHub**, then **Settings**, **Developer settings**, **OAuth Apps**, **New OAuth App**, with:
 
-```text
-GitHub -> Settings -> Developer settings -> OAuth Apps -> New OAuth App
-```
+| Field | Value |
+| :--- | :--- |
+| Application name | `TG-GithubBot` |
+| Homepage URL | `https://your-domain.com` |
+| Authorization callback URL | `https://your-domain.com/oauth/callback` |
 
-Use these values:
-
-```text
-Application name: TG-GithubBot
-Homepage URL: https://your-domain.com
-Authorization callback URL: https://your-domain.com/oauth/callback
-```
-
-After creating the OAuth App, copy:
-
-- Client ID
-- Client Secret
-
-Use them as:
-
-```dotenv
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-```
+Copy the **Client ID** and **Client Secret** into `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
 
 The bot requests these OAuth scopes:
 
-| Scope | Rationale |
+| Scope | Purpose |
 | :--- | :--- |
-| `repo` | Full control of private/public repos. Required to create/delete repository webhooks and perform PR actions (Merge/Approve). |
-| `admin:repo_hook` | Required to programmatically manage the webhooks that send notifications to Telegram. |
-| `read:user` | Used to identify the GitHub user and link their account to their Telegram ID. |
+| `repo` | Access public and private repositories; required to manage webhooks and perform PR actions (approve/close/reopen). |
+| `admin:repo_hook` | Create, update, and delete the repository webhooks that deliver notifications. |
+| `read:user` | Identify the GitHub account and link it to a Telegram ID. |
 
-## Environment Variables
+## Configuration
 
-Copy the sample file:
+Copy the sample environment file and edit it:
 
 ```bash
 cp sample.env .env
 ```
 
-On Windows PowerShell:
-
 ```powershell
+# Windows PowerShell
 Copy-Item sample.env .env
 ```
 
-Edit `.env`:
+### Environment Variables
 
-```dotenv
-# Telegram bot token from BotFather
-TELEGRAM_TOKEN=123456:ABC-DEF...
+| Variable | Required | Default | Description |
+| :--- | :---: | :--- | :--- |
+| `TELEGRAM_TOKEN` | Yes | — | Bot token from @BotFather. |
+| `TELEGRAM_WEBHOOK_URL` | Yes | — | Public HTTPS base URL, no trailing slash. Used for the OAuth callback and GitHub webhooks. |
+| `GITHUB_CLIENT_ID` | Yes | — | GitHub OAuth App client ID. |
+| `GITHUB_CLIENT_SECRET` | Yes | — | GitHub OAuth App client secret. |
+| `ENCRYPTION_KEY` | Yes | — | 64-character hex string (32 bytes) used to encrypt OAuth tokens. Must remain stable. |
+| `MONGODB_URI` | Yes | — | MongoDB connection string. |
+| `GITHUB_WEBHOOK_SECRET` | Recommended | — | Shared secret for validating GitHub webhook payloads. |
+| `DATABASE_NAME` | No | `github_bot` | MongoDB database name. |
+| `PORT` | No | `8080` | HTTP server port. Use `10000` on Render. |
+| `USE_POLLING` | No | `false` | `true` receives Telegram updates via long polling. Docker Compose defaults this to `true`. |
 
-# Public base URL with no trailing slash
-TELEGRAM_WEBHOOK_URL=https://your-domain.com
-
-# GitHub OAuth App credentials
-GITHUB_CLIENT_ID=Iv1...
-GITHUB_CLIENT_SECRET=...
-GITHUB_WEBHOOK_SECRET=...
-
-# HTTP server port (Use 10000 for Render, 8080 for Standard/Docker)
-PORT=8080
-
-# (Optional) Set to true for Polling (Best for Cloud/Local). Default: false (Webhooks)
-USE_POLLING=false
-
-# MongoDB connection string
-MONGODB_URI=mongodb://localhost:27017
-
-# MongoDB database name
-DATABASE_NAME=github_bot
-
-# Stable 32-byte hex key for encrypting stored tokens
-ENCRYPTION_KEY=...
-```
-
-> [!CAUTION]
-> **Security Warning**: `GITHUB_WEBHOOK_SECRET` must be a strong, random string. If left as default, unauthorized parties could inject fake GitHub activity into your Telegram chats.
-
-Generate secure secrets:
+### Generating Secrets
 
 ```bash
 openssl rand -hex 32
 ```
 
-Use one generated value for `ENCRYPTION_KEY`. Use another generated value for `GITHUB_WEBHOOK_SECRET`.
+Use one generated value for `ENCRYPTION_KEY` and another for `GITHUB_WEBHOOK_SECRET`.
 
-PowerShell alternative for `ENCRYPTION_KEY`:
+PowerShell alternative:
 
 ```powershell
 -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Minimum 0 -Maximum 256) })
 ```
 
-Important:
+> [!CAUTION]
+> `GITHUB_WEBHOOK_SECRET` must be a strong, random string — a weak or default secret lets anyone inject fake GitHub activity into your chats.
+> `ENCRYPTION_KEY` must never change after deployment; stored OAuth tokens cannot be recovered without the original key.
 
-- `ENCRYPTION_KEY` must stay stable. If you change it, stored OAuth tokens and webhook chat tokens can no longer be decrypted.
-- `TELEGRAM_WEBHOOK_URL` must be reachable by GitHub over HTTPS.
-- Do not commit `.env`.
+Never commit `.env` to version control.
 
-### Optional Button Custom Emoji
+### Optional: Button Custom Emoji
 
-Telegram Bot API 9.4 supports custom emoji icons and visual button styles. Button styles are enabled automatically by the bot. Custom emoji icons are optional and can be configured with Telegram custom emoji IDs.
-
-If these variables are not set, the bot still works and uses styled text buttons without custom emoji icons.
+Telegram Bot API 9.4 supports custom emoji icons and visual button styles. Button styles are enabled automatically; custom emoji icons are optional and configured via custom emoji IDs. Without them, the bot renders styled text buttons.
 
 ```dotenv
 TG_BUTTON_ICON_ADD=
@@ -202,11 +218,11 @@ TG_BUTTON_ICON_SETTINGS=
 TG_BUTTON_ICON_STOP=
 ```
 
-Use only the raw custom emoji ID as the value. Do not paste the emoji character itself.
+Use the raw custom emoji ID as the value — not the emoji character.
 
-## Deploy With Docker Compose
+## Deployment
 
-Docker Compose is the recommended deployment path.
+### Docker Compose (Recommended)
 
 1. Clone the repository:
 
@@ -228,25 +244,21 @@ Docker Compose is the recommended deployment path.
    docker compose up -d --build
    ```
 
-4. Check logs:
+4. Verify:
 
    ```bash
    docker compose logs -f bot
    ```
 
-5. Confirm the health page:
+   The health endpoint should respond at `http://your-server-ip:8080`.
 
-   ```text
-   http://your-server-ip:8080
-   ```
+For production, put a reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel, or a platform HTTPS proxy) in front of port `8080`.
 
-For production, put a reverse proxy such as Caddy, Nginx, Traefik, Cloudflare Tunnel, or a platform HTTPS proxy in front of port `8080`.
+### Reverse Proxy (Example: Caddy)
 
-## Example Caddy Reverse Proxy
+Install Caddy and point your domain's DNS record at the server.
 
-Install Caddy on your server and point your domain DNS record to the server.
-
-Example `Caddyfile`:
+`Caddyfile`:
 
 ```caddyfile
 your-domain.com {
@@ -254,60 +266,26 @@ your-domain.com {
 }
 ```
 
-Then set:
+Set `TELEGRAM_WEBHOOK_URL=https://your-domain.com` and restart with `docker compose up -d --build`.
 
-```dotenv
-TELEGRAM_WEBHOOK_URL=https://your-domain.com
-```
+### Local Testing with a Tunnel
 
-Restart the bot after changing `.env`:
-
-```bash
-docker compose up -d --build
-```
-
-## Test Locally With A Tunnel
-
-For local testing, expose port `8080` with a tunnel.
-
-Using ngrok:
+Expose port `8080` through a tunnel such as ngrok:
 
 ```bash
 docker compose up -d --build
 ngrok http 8080
 ```
 
-Set `TELEGRAM_WEBHOOK_URL` to the HTTPS ngrok URL:
+Then:
 
-```dotenv
-TELEGRAM_WEBHOOK_URL=https://example.ngrok-free.app
-```
+1. Set `TELEGRAM_WEBHOOK_URL` to the HTTPS tunnel URL.
+2. Update the GitHub OAuth App callback URL to `https://<tunnel-url>/oauth/callback`.
+3. Restart the bot: `docker compose up -d --build`.
 
-Update the GitHub OAuth App callback URL to:
+### Manual Build
 
-```text
-https://example.ngrok-free.app/oauth/callback
-```
-
-Restart the bot:
-
-```bash
-docker compose up -d --build
-```
-
-## Manual Run Without Docker
-
-You need a running MongoDB instance first.
-
-Example `.env` for local MongoDB:
-
-```dotenv
-MONGODB_URI=mongodb://localhost:27017
-DATABASE_NAME=github_bot
-PORT=8080
-```
-
-Install dependencies and run:
+Requires a running MongoDB instance and Go 1.27+.
 
 ```bash
 go mod download
@@ -321,145 +299,40 @@ go build -o bot ./cmd/bot
 ./bot
 ```
 
-On Windows PowerShell:
-
 ```powershell
+# Windows PowerShell
 go build -o bot.exe ./cmd/bot
 .\bot.exe
 ```
 
-## First-Time Bot Setup
+### Cloud Platforms (Render, Heroku, Koyeb)
 
-1. Start a private chat with your bot.
-2. Send:
+#### General Cloud Setup
 
-   ```text
-   /start
-   ```
+Cloud platforms host the bot as a web service, but they have ephemeral filesystems and may spin down when idle. Follow these rules for a stable deployment:
 
-3. Connect your GitHub account in private chat:
+- **External MongoDB is required.** Use [MongoDB Atlas](https://www.mongodb.com/atlas) (generous free tier) or a managed add-on from your platform, and set its connection string as `MONGODB_URI`.
+- **Use polling.** Set `USE_POLLING=true` for maximum reliability on free tiers — the bot starts receiving commands the moment the container wakes, with no extra networking setup.
+- **Match the OAuth callback.** Point your GitHub OAuth App's authorization callback URL at `https://<your-service-url>/oauth/callback`.
+- **Expect sleep on free tiers.** Accessing the public URL or receiving a GitHub event wakes the bot.
+- **Never change `ENCRYPTION_KEY`** after deployment, or stored GitHub tokens are lost.
+- **Webhook paths are automatic.** GitHub webhooks are created at `https://<your-service-url>/webhook/<token>`.
 
-   ```text
-   /connect
-   ```
+#### Render
 
-4. Add the bot to a group if you want group notifications.
-5. In the target chat, link a repository:
+The repo ships a Render Blueprint (`render.yaml`) that configures the Docker runtime, a `/healthz` health check, port `10000`, and `USE_POLLING=true`.
 
-   ```text
-   /addrepo owner/repo
-   ```
+1. Push the repo to GitHub or GitLab.
+2. On [Render](https://render.com), click **New**, then **Blueprint**, and select the repo.
+3. Fill in the secrets when prompted (`TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`).
+4. After the first deploy, set `TELEGRAM_WEBHOOK_URL` to the service URL, e.g. `https://tg-githubbot.onrender.com`.
+5. Update the GitHub OAuth App callback URL to `https://tg-githubbot.onrender.com/oauth/callback`.
 
-   Or browse your repositories:
+Deploys run automatically on every push; manual deploys can be triggered from the dashboard.
 
-   ```text
-   /addrepo
-   ```
+#### Heroku
 
-6. Configure event settings:
-
-   ```text
-   /settings
-   ```
-
-Existing linked repositories keep their current GitHub webhook event settings. To move an old linked repo to wildcard event delivery, either use `/settings` and choose "Send me everything", or remove and re-add the repository.
-
-## Commands
-
-```text
-/start - Start the bot
-/help - Show help
-/connect - Connect GitHub account in private chat
-/addrepo [owner/repo] - Link a repository to the current chat
-/removerepo [owner/repo] - Unlink a repository from the current chat
-/repos - List linked repositories
-/settings - Configure linked repository events
-/privacy - Show privacy policy
-/logout - Clear your stored GitHub token
-/reload - Refresh group admin cache
-/close - Close an issue or PR when replying to a bot notification
-/reopen - Reopen an issue or PR when replying to a bot notification
-/approve - Approve a PR when replying to a bot notification
-```
-
-## Permissions And Access Model
-
-- `/connect` must be used in private chat.
-- In groups, only Telegram admins with the **"Change Group Info"** permission can add/remove repositories or change settings.
-- The GitHub user running `/addrepo` must have permission to create repository webhooks.
-- Reply actions use the GitHub token of the Telegram user who sends the reply or command.
-- OAuth tokens are encrypted with AES-GCM (256-bit) before being stored in MongoDB.
-
-## Updating The Bot
-
-Pull the latest code and restart:
-
-```bash
-git pull
-docker compose up -d --build
-```
-
-Watch logs:
-
-```bash
-docker compose logs -f github-bot
-```
-
-## Deploy On Cloud Web Services (Render, Heroku, Koyeb, etc.)
-
-Cloud platforms can host the bot as a **Web Service**. Because these platforms typically have ephemeral filesystems and may spin down during idle time, follow these universal steps for a stable deployment.
-
-### 1. External MongoDB Requirement
-Cloud web services do not persist local files. You **must** use an external MongoDB database:
-- **MongoDB Atlas**: Recommended (has a generous free tier).
-- **Platform Add-ons**: You can also use managed MongoDB add-ons provided by your platform.
-
-Use the connection string as your `MONGODB_URI`.
-
-### 2. Environment Variables
-Configure these variables in your platform's dashboard:
-
-| Variable | Description |
-| :--- | :--- |
-| `PORT` | Set to `10000` (Render) or `8080` (Standard). Most platforms provide this automatically. |
-| `USE_POLLING` | Set to `true` for maximum reliability on free tiers. |
-| `TELEGRAM_TOKEN` | Your bot token from @BotFather. |
-| `TELEGRAM_WEBHOOK_URL` | The public URL of your service (e.g., `https://my-bot.koyeb.app`). |
-| `GITHUB_CLIENT_ID` | From your GitHub OAuth App. |
-| `GITHUB_CLIENT_SECRET` | From your GitHub OAuth App. |
-| `GITHUB_WEBHOOK_SECRET` | A random secret for payload validation. |
-| `ENCRYPTION_KEY` | 64 hex characters (32 bytes) for token security. |
-| `MONGODB_URI` | Your external database connection string. |
-
-### 3. The Polling Advantage
-On cloud platforms (especially free tiers), setting `USE_POLLING=true` is highly recommended. It bypasses complex networking issues and ensures the bot starts receiving commands the moment the container wakes up.
-
-### 4. GitHub OAuth Setup
-Update your GitHub OAuth App's **Authorization callback URL** to match your public service URL:
-`https://your-service-url.com/oauth/callback`
-
-#### Summary for Cloud Users
-- **Stay Awake**: Free tiers may sleep. Accessing the public URL or receiving a GitHub event will wake the bot.
-- **Stable Encryption**: Never change your `ENCRYPTION_KEY` after deployment, or you will lose access to stored GitHub tokens.
-- **Webhook Paths**: GitHub webhooks will be created automatically at `https://your-service.com/webhook/<token>`.
-
-### Deploy On Render
-
-The repo ships a Render Blueprint (`render.yaml`) that configures everything: Docker runtime, `/healthz` health check, port `10000`, and `USE_POLLING=true`.
-
-1. Push this repo to GitHub/GitLab.
-2. On [Render](https://render.com), click **New → Blueprint** and select the repo. Render reads `render.yaml`.
-3. Fill in the secret values when prompted (`TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`).
-4. Set `TELEGRAM_WEBHOOK_URL` to your service URL, e.g. `https://tg-githubbot.onrender.com` (find it on the service page after the first deploy).
-5. Update your GitHub OAuth App callback URL to `https://tg-githubbot.onrender.com/oauth/callback`.
-
-Deploys are automatic on every push (`autoDeploy: true`). You can also trigger manual deploys from the dashboard.
-
-### Deploy On Heroku
-
-The repo includes `heroku.yml` (container stack, builds from the Dockerfile) and `app.json` (one-click **Deploy to Heroku** button with all env vars pre-wired).
-
-Using the CLI:
+The repo includes `heroku.yml` (container stack) and `app.json` (one-click **Deploy to Heroku** button with all env vars pre-wired).
 
 ```bash
 heroku create your-app-name
@@ -470,23 +343,18 @@ heroku config:set TELEGRAM_TOKEN=... TELEGRAM_WEBHOOK_URL=https://your-app-name.
 git push heroku master
 ```
 
-Or deploy with Docker directly:
+Or deploy the Docker image directly:
 
 ```bash
 heroku container:push web
 heroku container:release web
 ```
 
-Notes:
-- Heroku injects `PORT` automatically; the bot reads it at runtime.
-- `app.json` sets `USE_POLLING=true` by default — keep it on for reliability.
-- Update your GitHub OAuth App callback URL to `https://your-app-name.herokuapp.com/oauth/callback`.
+Heroku injects `PORT` automatically, and `app.json` defaults `USE_POLLING=true` — keep it on. Update the OAuth callback URL to `https://your-app-name.herokuapp.com/oauth/callback`.
 
-### Deploy On Koyeb
+#### Koyeb
 
-Koyeb builds the Dockerfile from your Git repo and exposes it on a public `*.koyeb.app` URL.
-
-Using the CLI:
+Koyeb builds the Dockerfile from the Git repo and exposes a public `*.koyeb.app` URL.
 
 ```bash
 koyeb app init tg-githubbot \
@@ -506,142 +374,173 @@ koyeb app init tg-githubbot \
   --env MONGODB_URI=...
 ```
 
-Or via the [Koyeb dashboard](https://app.koyeb.com): **Create App → GitHub →** select the repo, builder **Dockerfile**, port `8080`, then add the environment variables from the table above.
+Or via the [Koyeb dashboard](https://app.koyeb.com): **Create App**, choose **GitHub**, select the repo, builder **Dockerfile**, port `8080`, then add the environment variables listed above.
 
-Notes:
-- Set `TELEGRAM_WEBHOOK_URL` to your Koyeb public URL (shown on the service page).
-- Update your GitHub OAuth App callback URL to `https://<your-koyeb-url>/oauth/callback`.
-- Koyeb's free instance sleeps after inactivity; `USE_POLLING=true` makes wake-ups seamless.
+Set `TELEGRAM_WEBHOOK_URL` to the Koyeb public URL and update the OAuth callback URL to `https://<your-koyeb-url>/oauth/callback`. Koyeb's free instance sleeps after inactivity; polling makes wake-ups seamless.
+
+## Usage
+
+### First-Time Setup
+
+1. Open a private chat with the bot and send `/start`.
+2. Send `/connect` and complete the GitHub OAuth flow to link your account.
+3. Add the bot to a group if you want notifications there.
+4. In the target chat, link a repository:
+
+   ```text
+   /addrepo owner/repo
+   ```
+
+   Or send `/addrepo` without arguments to browse your repositories with inline buttons.
+
+5. Fine-tune which events the chat receives with `/settings`.
+
+> [!NOTE]
+> Existing linked repositories keep their current webhook event settings. To switch a repository to wildcard delivery ("Send me everything"), use `/settings` or remove and re-add the repository.
+
+### Commands
+
+| Command | Where | Description |
+| :--- | :--- | :--- |
+| `/start` | Any chat | Start the bot. |
+| `/help` | Any chat | Show help. |
+| `/connect` | Private chat | Connect your GitHub account via OAuth. |
+| `/addrepo [owner/repo]` | Any chat | Link a repository; without arguments, browse with inline buttons. |
+| `/removerepo [owner/repo]` | Any chat | Unlink a repository. |
+| `/repos` | Any chat | List repositories linked to this chat. |
+| `/settings` | Any chat | Configure which events each linked repository delivers. |
+| `/privacy` | Any chat | Show the privacy policy. |
+| `/logout` | Private chat | Clear your stored GitHub token. |
+| `/reload` | Groups | Refresh the cached group admin list. |
+| `/close` | Reply to a notification | Close the linked issue or PR. |
+| `/reopen` | Reply to a notification | Reopen the linked issue or PR. |
+| `/approve` | Reply to a notification | Approve the linked PR. |
+
+### Permissions and Access Model
+
+- `/connect` and `/logout` work only in private chat.
+- In groups, only Telegram admins with the **Change Group Info** permission can add or remove repositories and change settings.
+- The GitHub account running `/addrepo` must have permission to create repository webhooks (repo admin).
+- Reply actions (`/close`, `/reopen`, `/approve`, and comment replies) use the GitHub token of the Telegram user who sends them.
+- OAuth tokens are encrypted with AES-256-GCM before being stored in MongoDB.
+
+### Updating
+
+```bash
+git pull
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+## Supported GitHub Events
+
+The bot formats and delivers **78 GitHub webhook events**, including:
+
+- **Push** — commits and branch updates
+- **Pull requests** — open, close, review, approve, merge
+- **Issues** — open, close, comment, label, milestone
+- **CI/CD** — workflow runs and jobs, check suites, deployments
+- **Community** — stars, forks, watches, releases, discussions
+- **Security** — code scanning, Dependabot, and secret scanning alerts
+
+For the complete list, see [`internal/github/events.go`](internal/github/events.go).
+
+## Security
+
+- OAuth tokens are encrypted at rest with AES-256-GCM; the key never leaves your `.env`.
+- GitHub webhook payloads are validated with HMAC signatures (`GITHUB_WEBHOOK_SECRET`).
+- Group administration is restricted to Telegram admins; reply actions run as the replying user's own GitHub token.
+
+Operational checklist:
+
+- Serve only behind HTTPS.
+- Keep `.env` private and never commit it.
+- Keep `ENCRYPTION_KEY` stable and backed up.
+- Use a persistent MongoDB volume.
+- Rotate GitHub OAuth and webhook secrets immediately if leaked.
+- Use a dedicated GitHub OAuth App for this bot.
 
 ## Backups
 
 MongoDB stores linked chats, repository webhook IDs, and encrypted OAuth tokens.
 
-Back up the Docker volume:
+Back up the Docker volume (verify the exact name with `docker volume ls`):
 
 ```bash
 docker run --rm \
-  -v tg-githubbot_mongo-data:/data/db \
+  -v tg-githubbot_mongodb_data:/data/db \
   -v "$PWD:/backup" \
   alpine tar czf /backup/mongo-data-backup.tar.gz /data/db
 ```
 
-Keep a copy of:
-
-- `.env`
-- MongoDB data
-- `ENCRYPTION_KEY`
-
-Without the original `ENCRYPTION_KEY`, encrypted tokens cannot be recovered.
+Keep copies of `.env`, the MongoDB data, and `ENCRYPTION_KEY`. Without the original `ENCRYPTION_KEY`, encrypted tokens cannot be recovered.
 
 ## Troubleshooting
 
-### Bot starts but `/connect` fails
+### `/connect` fails
 
-Check:
+- `TELEGRAM_WEBHOOK_URL` is correct and has no path — use `https://your-domain.com`, not `https://your-domain.com/oauth/callback`.
+- The GitHub OAuth App callback URL is exactly `https://your-domain.com/oauth/callback`.
+- The public URL actually reaches the bot.
+- `ENCRYPTION_KEY` did not change between sending `/connect` and opening the callback.
+- On Render free, open the service URL first to wake the instance, then retry.
 
-- `TELEGRAM_WEBHOOK_URL` is correct.
-- `TELEGRAM_WEBHOOK_URL` has no path. Use `https://your-domain.com`, not `https://your-domain.com/oauth/callback`.
-- The GitHub OAuth App callback URL is exactly:
-
-  ```text
-  https://your-domain.com/oauth/callback
-  ```
-
-- The public URL reaches the bot.
-- Your `ENCRYPTION_KEY` did not change between sending `/connect` and opening the GitHub callback.
-- On Render free, open the Render service URL first if the service is asleep, then send `/connect` again.
-
-If the browser shows `Invalid or expired state`, return to Telegram and run `/connect` again. OAuth links are intentionally short-lived.
+If the browser shows `Invalid or expired state`, run `/connect` again — OAuth links are intentionally short-lived.
 
 ### GitHub says webhook delivery failed
 
-Check:
-
-- Your domain uses HTTPS.
-- The reverse proxy points to port `8080`.
-- `GITHUB_WEBHOOK_SECRET` in `.env` matches the secret configured on the GitHub webhook.
+- The domain uses HTTPS.
+- The reverse proxy forwards to port `8080`.
+- `GITHUB_WEBHOOK_SECRET` matches the secret configured on the GitHub webhook.
 - The bot logs show no signature validation errors.
 
-### `/addrepo` fails with permissions error
+### `/addrepo` fails with a permissions error
 
-The connected GitHub user must have admin rights on the repository because the bot creates repository webhooks.
+The connected GitHub user must have admin rights on the repository — the bot creates repository webhooks.
 
 ### No events arrive after adding a repo
 
-Check the repository webhook in GitHub:
+Check the webhook under **Repository**, then **Settings**, then **Webhooks**, and confirm:
 
-```text
-Repository -> Settings -> Webhooks
-```
-
-Confirm:
-
-- Payload URL starts with `https://your-domain.com/webhook/`.
+- The payload URL starts with `https://your-domain.com/webhook/`.
 - Content type is `application/json`.
-- Secret is set.
+- A secret is set.
 - The webhook is active.
 - Recent deliveries show HTTP `200`.
 
 ### Group commands say you are not admin
 
-Telegram admin status is cached. Run:
-
-```text
-/reload
-```
-
-Then retry the command.
+Telegram admin status is cached. Run `/reload` and retry.
 
 ## Development
 
-Run tests:
-
 ```bash
-go test ./... -count=1
+go test ./... -count=1      # run tests
+gofmt -w ./cmd ./internal   # format code
+go vet ./...                # static analysis
 ```
 
-Format code:
+CI runs formatting checks, build, vet, and tests on every push (see `.github/workflows/ci.yml`).
 
-```bash
-gofmt -w ./cmd ./internal
-```
-
-List packages:
-
-```bash
-go list ./...
-```
-
-## Project Layout
+## Project Structure
 
 ```text
-cmd/bot/main.go                  Application entry point
-internal/config                  Environment loading
-internal/db                      MongoDB access
-internal/cache                   In-memory TTL cache
-internal/bot/commands            Telegram commands
-internal/bot/callbacks           Telegram inline callbacks
-internal/bot/middleware          Chat tracking middleware
-internal/github                  OAuth, webhook parsing, event formatting
-internal/models                  Shared data models
-internal/utils                   Crypto and Telegram helpers
+cmd/bot/main.go            Application entry point
+internal/config            Environment loading
+internal/db                MongoDB access
+internal/cache             In-memory TTL cache
+internal/bot/commands      Telegram commands
+internal/bot/callbacks     Telegram inline callbacks
+internal/bot/middleware    Chat tracking middleware
+internal/github            OAuth, webhook parsing, event formatting
+internal/models            Shared data models
+internal/utils             Crypto and Telegram helpers
 ```
-
-## Production Notes
-
-- Run behind HTTPS.
-- Keep `.env` private.
-- Keep `ENCRYPTION_KEY` stable and backed up.
-- Use a persistent MongoDB volume.
-- Monitor `docker compose logs`.
-- Rotate GitHub OAuth secrets and webhook secrets if leaked.
-- Use a dedicated GitHub OAuth App for this bot.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE).
+Released under the MIT License. See [LICENSE](LICENSE).
 
 ## Support
 
-Open an issue on GitHub with logs and reproduction steps.
+Open a GitHub issue with logs and reproduction steps.
