@@ -1,0 +1,56 @@
+{
+  "name": "TG-GithubBot",
+  "description": "Telegram bot that connects GitHub repositories to Telegram chats: notifications for pushes, issues, PRs, and more, with OAuth login and reply actions.",
+  "keywords": ["telegram", "github", "bot", "webhooks", "go"],
+  "website": "https://github.com/bisug/TG-GithubBot",
+  "repository": "https://github.com/bisug/TG-GithubBot",
+  "logo": "https://telegram.org/img/t_logo.png",
+  "success_url": "/healthz",
+  "stack": "container",
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  },
+  "env": {
+    "TELEGRAM_TOKEN": {
+      "description": "Bot token from @BotFather",
+      "required": true
+    },
+    "TELEGRAM_WEBHOOK_URL": {
+      "description": "Public HTTPS URL of this app (no trailing slash), e.g. https://your-app.herokuapp.com",
+      "required": true
+    },
+    "GITHUB_CLIENT_ID": {
+      "description": "Client ID of your GitHub OAuth App",
+      "required": true
+    },
+    "GITHUB_CLIENT_SECRET": {
+      "description": "Client secret of your GitHub OAuth App",
+      "required": true
+    },
+    "GITHUB_WEBHOOK_SECRET": {
+      "description": "Random string used to validate GitHub webhook payloads (openssl rand -hex 20)",
+      "required": true
+    },
+    "ENCRYPTION_KEY": {
+      "description": "64 hex chars (32 bytes) used to encrypt stored OAuth tokens (openssl rand -hex 32)",
+      "required": true
+    },
+    "MONGODB_URI": {
+      "description": "External MongoDB connection string (e.g. MongoDB Atlas)",
+      "required": true
+    },
+    "DATABASE_NAME": {
+      "description": "MongoDB database name",
+      "required": false,
+      "value": "github_bot"
+    },
+    "USE_POLLING": {
+      "description": "Set to true to use Telegram long-polling instead of webhooks (recommended on Heroku)",
+      "required": false,
+      "value": "true"
+    }
+  }
+}

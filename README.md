@@ -405,14 +405,14 @@ Watch logs:
 docker compose logs -f github-bot
 ```
 
-## Deploy On Cloud Web Services (Render, Heroku, Railway, etc.)
+## Deploy On Cloud Web Services (Render, Heroku, Koyeb, etc.)
 
 Cloud platforms can host the bot as a **Web Service**. Because these platforms typically have ephemeral filesystems and may spin down during idle time, follow these universal steps for a stable deployment.
 
 ### 1. External MongoDB Requirement
 Cloud web services do not persist local files. You **must** use an external MongoDB database:
 - **MongoDB Atlas**: Recommended (has a generous free tier).
-- **Railway/Heroku Add-ons**: You can also use managed MongoDB add-ons provided by your platform.
+- **Platform Add-ons**: You can also use managed MongoDB add-ons provided by your platform.
 
 Use the connection string as your `MONGODB_URI`.
 
@@ -424,7 +424,7 @@ Configure these variables in your platform's dashboard:
 | `PORT` | Set to `10000` (Render) or `8080` (Standard). Most platforms provide this automatically. |
 | `USE_POLLING` | Set to `true` for maximum reliability on free tiers. |
 | `TELEGRAM_TOKEN` | Your bot token from @BotFather. |
-| `TELEGRAM_WEBHOOK_URL` | The public URL of your service (e.g., `https://my-bot.herokapp.com`). |
+| `TELEGRAM_WEBHOOK_URL` | The public URL of your service (e.g., `https://my-bot.koyeb.app`). |
 | `GITHUB_CLIENT_ID` | From your GitHub OAuth App. |
 | `GITHUB_CLIENT_SECRET` | From your GitHub OAuth App. |
 | `GITHUB_WEBHOOK_SECRET` | A random secret for payload validation. |
@@ -442,6 +442,76 @@ Update your GitHub OAuth App's **Authorization callback URL** to match your publ
 - **Stay Awake**: Free tiers may sleep. Accessing the public URL or receiving a GitHub event will wake the bot.
 - **Stable Encryption**: Never change your `ENCRYPTION_KEY` after deployment, or you will lose access to stored GitHub tokens.
 - **Webhook Paths**: GitHub webhooks will be created automatically at `https://your-service.com/webhook/<token>`.
+
+### Deploy On Render
+
+The repo ships a Render Blueprint (`render.yaml`) that configures everything: Docker runtime, `/healthz` health check, port `10000`, and `USE_POLLING=true`.
+
+1. Push this repo to GitHub/GitLab.
+2. On [Render](https://render.com), click **New → Blueprint** and select the repo. Render reads `render.yaml`.
+3. Fill in the secret values when prompted (`TELEGRAM_TOKEN`, `TELEGRAM_WEBHOOK_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_WEBHOOK_SECRET`, `ENCRYPTION_KEY`, `MONGODB_URI`).
+4. Set `TELEGRAM_WEBHOOK_URL` to your service URL, e.g. `https://tg-githubbot.onrender.com` (find it on the service page after the first deploy).
+5. Update your GitHub OAuth App callback URL to `https://tg-githubbot.onrender.com/oauth/callback`.
+
+Deploys are automatic on every push (`autoDeploy: true`). You can also trigger manual deploys from the dashboard.
+
+### Deploy On Heroku
+
+The repo includes `heroku.yml` (container stack, builds from the Dockerfile) and `app.json` (one-click **Deploy to Heroku** button with all env vars pre-wired).
+
+Using the CLI:
+
+```bash
+heroku create your-app-name
+heroku stack:set container
+heroku config:set TELEGRAM_TOKEN=... TELEGRAM_WEBHOOK_URL=https://your-app-name.herokuapp.com \
+  GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=... GITHUB_WEBHOOK_SECRET=... \
+  ENCRYPTION_KEY=$(openssl rand -hex 32) MONGODB_URI=... USE_POLLING=true
+git push heroku master
+```
+
+Or deploy with Docker directly:
+
+```bash
+heroku container:push web
+heroku container:release web
+```
+
+Notes:
+- Heroku injects `PORT` automatically; the bot reads it at runtime.
+- `app.json` sets `USE_POLLING=true` by default — keep it on for reliability.
+- Update your GitHub OAuth App callback URL to `https://your-app-name.herokuapp.com/oauth/callback`.
+
+### Deploy On Koyeb
+
+Koyeb builds the Dockerfile from your Git repo and exposes it on a public `*.koyeb.app` URL.
+
+Using the CLI:
+
+```bash
+koyeb app init tg-githubbot \
+  --git github.com/<YOUR_USERNAME>/TG-GithubBot \
+  --git-branch master \
+  --git-builder docker \
+  --ports 8080:http \
+  --routes /:8080 \
+  --env PORT=8080 \
+  --env USE_POLLING=true \
+  --env TELEGRAM_TOKEN=... \
+  --env TELEGRAM_WEBHOOK_URL=https://tg-githubbot-<your-org>.koyeb.app \
+  --env GITHUB_CLIENT_ID=... \
+  --env GITHUB_CLIENT_SECRET=... \
+  --env GITHUB_WEBHOOK_SECRET=... \
+  --env ENCRYPTION_KEY=... \
+  --env MONGODB_URI=...
+```
+
+Or via the [Koyeb dashboard](https://app.koyeb.com): **Create App → GitHub →** select the repo, builder **Dockerfile**, port `8080`, then add the environment variables from the table above.
+
+Notes:
+- Set `TELEGRAM_WEBHOOK_URL` to your Koyeb public URL (shown on the service page).
+- Update your GitHub OAuth App callback URL to `https://<your-koyeb-url>/oauth/callback`.
+- Koyeb's free instance sleeps after inactivity; `USE_POLLING=true` makes wake-ups seamless.
 
 ## Backups
 

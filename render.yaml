@@ -12,6 +12,8 @@ services:
         value: 10000
       - key: DATABASE_NAME
         value: github_bot
+      - key: USE_POLLING
+        value: "true"
       - key: TELEGRAM_TOKEN
         sync: false
       - key: TELEGRAM_WEBHOOK_URL
