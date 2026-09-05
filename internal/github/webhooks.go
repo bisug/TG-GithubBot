@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -78,22 +78,22 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 			id, err := strconv.ParseInt(decrypted, 10, 64)
 			if err == nil {
 				chatID = id
-				// log.Printf("Decrypted Chat ID from token: %d", chatID)
+				// slog.Debug("Decrypted chat ID from token", "chat", chatID)
 			} else {
-				log.Printf("Failed to parse decrypted token as int64: %v", err)
+				slog.Error("Failed to parse decrypted token as int64", "error", err)
 			}
 		} else {
-			log.Printf("Failed to decrypt webhook token: %v", err)
+			slog.Error("Failed to decrypt webhook token", "error", err)
 		}
 	}
 
 	if chatID == 0 {
-		log.Printf("Webhook rejected: invalid token event=%s delivery=%s hook_id=%s remote=%s path=%s", eventType, deliveryID, hookIDHeader, r.RemoteAddr, r.URL.Path)
+		slog.Warn("Webhook rejected: invalid token", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "remote", r.RemoteAddr, "path", r.URL.Path)
 		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
 
-	log.Printf("Webhook received event=%s delivery=%s hook_id=%s chat=%d remote=%s", eventType, deliveryID, hookIDHeader, chatID, r.RemoteAddr)
+	slog.Info("Webhook received", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "chat", chatID, "remote", r.RemoteAddr)
 
 	// Read and validate the body exactly once. ValidatePayloadFromBody consumes
 	// r.Body and returns the payload; it verifies the GitHub HMAC signature only
@@ -109,15 +109,15 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			log.Printf("Webhook rejected: payload too large event=%s delivery=%s hook_id=%s chat=%d limit=%d", eventType, deliveryID, hookIDHeader, chatID, maxBytesErr.Limit)
+			slog.Warn("Webhook rejected: payload too large", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "chat", chatID, "limit", maxBytesErr.Limit)
 			http.Error(w, "Payload too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 
 		if s.Config.GitHubWebhookSecret == "" {
-			log.Printf("Webhook REJECTED: signature present but GITHUB_WEBHOOK_SECRET is empty; cannot verify. event=%s delivery=%s chat=%d error=%v", eventType, deliveryID, chatID, err)
+			slog.Error("Webhook REJECTED: signature present but GITHUB_WEBHOOK_SECRET is empty; cannot verify", "event", eventType, "delivery", deliveryID, "chat", chatID, "error", err)
 		} else {
-			log.Printf("Webhook REJECTED: Signature mismatch. This means the secret in GitHub doesn't match GITHUB_WEBHOOK_SECRET on Render. event=%s delivery=%s chat=%d error=%v", eventType, deliveryID, chatID, err)
+			slog.Error("Webhook REJECTED: signature mismatch (GitHub secret does not match GITHUB_WEBHOOK_SECRET)", "event", eventType, "delivery", deliveryID, "chat", chatID, "error", err)
 		}
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return
@@ -125,7 +125,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	event, err := parseWebhookEvent(eventType, payload)
 	if err != nil {
-		log.Printf("Webhook rejected: parse failed event=%s delivery=%s hook_id=%s chat=%d error=%v", eventType, deliveryID, hookIDHeader, chatID, err)
+		slog.Warn("Webhook rejected: parse failed", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "chat", chatID, "error", err)
 		http.Error(w, "Parse error", http.StatusInternalServerError)
 		return
 	}
@@ -137,7 +137,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	if deliveryID != "" {
 		if _, seen := s.DeliverySeen.Get(deliveryID); seen {
-			log.Printf("Webhook duplicate delivery ignored event=%s delivery=%s chat=%d", eventType, deliveryID, chatID)
+			slog.Info("Webhook duplicate delivery ignored", "event", eventType, "delivery", deliveryID, "chat", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -149,7 +149,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		defer s.Wg.Done()
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				log.Printf("Webhook processing panic event=%s delivery=%s hook_id=%d chat=%d elapsed=%s panic=%v", eventType, deliveryID, hookID, chatID, time.Since(receivedAt).Round(time.Millisecond), recovered)
+				slog.Error("Webhook processing panic", "event", eventType, "delivery", deliveryID, "hook_id", hookID, "chat", chatID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "panic", recovered)
 			}
 		}()
 
@@ -166,9 +166,9 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 			err := s.DB.UpdateRepoLinkName(ctx, chatID, hookID, newFullName)
 			cancel()
 			if err != nil {
-				log.Printf("Failed to update repo name for chat %d: %v", chatID, err)
+				slog.Warn("Failed to update repo name", "chat", chatID, "error", err)
 			} else {
-				log.Printf("Updated repo name to %s for chat %d", newFullName, chatID)
+				slog.Info("Updated repo name", "repo", newFullName, "chat", chatID)
 			}
 		}
 	}
@@ -176,7 +176,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	msg, markup := s.formatMessage(event)
 	markup = s.withPRActionButtons(event, markup)
 	if msg == "" {
-		log.Printf("Webhook skipped: empty formatted message event=%s delivery=%s chat=%d elapsed=%s", eventType, deliveryID, chatID, time.Since(receivedAt).Round(time.Millisecond))
+		slog.Info("Webhook skipped: empty formatted message", "event", eventType, "delivery", deliveryID, "chat", chatID, "elapsed", time.Since(receivedAt).Round(time.Millisecond))
 		return
 	}
 
@@ -205,7 +205,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	s.storeMessageContext(sentMsg.MessageId, chatID, event)
-	log.Printf("Webhook delivered chat=%d event=%s delivery=%s message_id=%d elapsed=%s", chatID, eventType, deliveryID, sentMsg.MessageId, time.Since(receivedAt).Round(time.Millisecond))
+	slog.Info("Webhook delivered", "chat", chatID, "event", eventType, "delivery", deliveryID, "message_id", sentMsg.MessageId, "elapsed", time.Since(receivedAt).Round(time.Millisecond))
 }
 
 // requestTimeout is how long a single sendMessage HTTP call to Telegram may run.
@@ -263,23 +263,23 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 
 		if retryAfter, ok := isTooManyRequests(err); ok {
 			if attempt < maxSendAttempts {
-				log.Printf("Telegram rate limited; sleeping %s chat=%d event=%s delivery=%s attempt=%d", retryAfter.Round(time.Second), chatID, eventType, deliveryID, attempt)
+				slog.Warn("Telegram rate limited; sleeping", "retry_after", retryAfter.Round(time.Second), "chat", chatID, "event", eventType, "delivery", deliveryID, "attempt", attempt)
 				time.Sleep(retryAfter)
 				continue
 			}
-			log.Printf("Error sending message (rate limited, gave up) chat=%d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
+			slog.Error("Error sending message (rate limited, gave up)", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
 			return nil, err
 		}
 
 		if isChatNotFound(err) {
 			// Permanent: the chat no longer exists or the bot cannot reach it. Log
 			// clearly so the operator removes the stale GitHub webhook.
-			log.Printf("Skipping unreachable chat %d event=%s delivery=%s: chat not found (remove the webhook for this chat)", chatID, eventType, deliveryID)
+			slog.Warn("Skipping unreachable chat: chat not found (remove the webhook for this chat)", "chat", chatID, "event", eventType, "delivery", deliveryID)
 			return nil, err
 		}
 
 		if isMarkdownParseError(err) {
-			log.Printf("Markdown send failed; retrying plain text chat=%d event=%s delivery=%s error=%v", chatID, eventType, deliveryID, err)
+			slog.Warn("Markdown send failed; retrying plain text", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
 			fallbackOpts := &gotgbot.SendMessageOpts{
 				LinkPreviewOptions: opts.LinkPreviewOptions,
 				ReplyMarkup:        opts.ReplyMarkup,
@@ -288,7 +288,7 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 			}
 			sent, fallbackErr := s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
 			if fallbackErr != nil {
-				log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), fallbackErr)
+				slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
 				return nil, fallbackErr
 			}
 			return sent, nil
@@ -297,11 +297,11 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 		// Generic/transient error (network, 5xx, ...): retry briefly with backoff.
 		if attempt < maxSendAttempts {
 			backoff := time.Duration(attempt) * time.Second
-			log.Printf("Transient send error; retrying in %s chat=%d event=%s delivery=%s attempt=%d error=%v", backoff, chatID, eventType, deliveryID, attempt, err)
+			slog.Warn("Transient send error; retrying", "backoff", backoff, "chat", chatID, "event", eventType, "delivery", deliveryID, "attempt", attempt, "error", err)
 			time.Sleep(backoff)
 			continue
 		}
-		log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
+		slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
 		return nil, err
 	}
 	return nil, lastErr
@@ -463,7 +463,7 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 	id, err := GenerateState()
 	if err != nil {
-		log.Printf("Failed to generate PR action id for %s/%s#%d: %v", owner, repo, prNum, err)
+		slog.Warn("Failed to generate PR action id", "owner", owner, "repo", repo, "pr", prNum, "error", err)
 		return markup
 	}
 
@@ -485,7 +485,7 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *gotgbot.InlineKeyboardMarkup) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Formatter panic for event %T: %v", event, r)
+			slog.Error("Formatter panic", "event_type", fmt.Sprintf("%T", event), "panic", r)
 			msg, markup = "", nil
 		}
 	}()

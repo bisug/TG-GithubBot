@@ -3,7 +3,7 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -45,12 +45,14 @@ func Load() *Config {
 	}
 
 	if len(missing) > 0 {
-		log.Fatalf("Missing required environment variables: %s", strings.Join(missing, ", "))
+		slog.Error("Missing required environment variables", "missing", strings.Join(missing, ", "))
+		os.Exit(1)
 	}
 
 	encryptionKey := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 	if err := validateEncryptionKey(encryptionKey); err != nil {
-		log.Fatalf("Invalid ENCRYPTION_KEY: %v", err)
+		slog.Error("Invalid ENCRYPTION_KEY", "error", err)
+		os.Exit(1)
 	}
 
 	return &Config{

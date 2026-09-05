@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -58,7 +58,7 @@ func WithStyle(style string) ButtonOption {
 			btn.Style = style
 		case "":
 		default:
-			log.Printf("Ignoring unsupported Telegram button style %q", style)
+			slog.Warn("Ignoring unsupported Telegram button style", "style", style)
 		}
 	}
 }
@@ -84,7 +84,7 @@ func applyOptions(btn *gotgbot.InlineKeyboardButton, opts ...ButtonOption) {
 
 func validateCallback(data string) {
 	if len(data) > 64 {
-		log.Printf("Telegram callback_data exceeds 64 bytes: length=%d data=%q", len(data), data)
+		slog.Warn("Telegram callback_data exceeds 64 bytes", "length", len(data), "data", data)
 	}
 }
 

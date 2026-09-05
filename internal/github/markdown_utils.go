@@ -2,7 +2,7 @@ package github
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -63,7 +63,7 @@ func ConvertHTMLToMarkdown(html string) string {
 
 	markdown, err := conv.ConvertString(html)
 	if err != nil {
-		log.Println("Error converting HTML to Markdown:", err)
+		slog.Warn("Error converting HTML to Markdown", "error", err)
 		return html
 	}
 

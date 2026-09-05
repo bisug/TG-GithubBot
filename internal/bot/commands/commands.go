@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -212,7 +212,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 
-		log.Printf("Webhook creation failed for %s: %v", repoFullName, hookErr)
+		slog.Error("Webhook creation failed", "repo", repoFullName, "error", hookErr)
 		msg := "⚠️ <b>Webhook creation failed.</b>\nPlease ensure you have admin rights and try again."
 		_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
@@ -233,10 +233,10 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	testMsg := " I asked GitHub to send a test webhook, so you should receive a test notification shortly."
 	if err := gh.TriggerRepositoryHookTest(context.Background(), client, owner, repo, webhookID); err != nil {
-		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", repoFullName, webhookID, err)
+		slog.Warn("Webhook test delivery failed", "repo", repoFullName, "hook_id", webhookID, "error", err)
 		testMsg = fmt.Sprintf(" Linked successfully, but GitHub test delivery failed: %s", html.EscapeString(err.Error()))
 	} else {
-		log.Printf("Webhook test delivery requested for %s hook_id=%d", repoFullName, webhookID)
+		slog.Info("Webhook test delivery requested", "repo", repoFullName, "hook_id", webhookID)
 	}
 
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", html.EscapeString(repoFullName))

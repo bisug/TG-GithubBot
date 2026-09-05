@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -110,7 +110,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 	// c:ep -> conf:evt_pg
 
 	if len(parts) < 2 {
-		log.Printf("Ignoring malformed callback data: %q", data)
+		slog.Warn("Ignoring malformed callback data", "data", data)
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 		return nil
 	}
@@ -124,7 +124,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 		}
 		if action == cbAddRepo {
 			if len(parts) < 4 {
-				log.Printf("Ignoring malformed add-repo callback data: %q", data)
+				slog.Warn("Ignoring malformed add-repo callback data", "data", data)
 				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 				return nil
 			}
@@ -140,7 +140,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 		}
 
 		if len(parts) < 3 {
-			log.Printf("Ignoring malformed settings callback data: %q", data)
+			slog.Warn("Ignoring malformed settings callback data", "data", data)
 			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid request."})
 			return nil
 		}
@@ -224,7 +224,7 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 				if h.handleAuthError(b, ctx, editErr) {
 					return nil
 				}
-				log.Printf("Failed to edit GitHub webhook for %s hook_id=%d chat=%d user=%d error=%v", link.RepoFullName, link.WebhookID, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, editErr)
+				slog.Error("Failed to edit GitHub webhook", "repo", link.RepoFullName, "hook_id", link.WebhookID, "chat", ctx.EffectiveChat.Id, "user", ctx.EffectiveUser.Id, "error", editErr)
 				text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
 				if isNotFoundErr(editErr) {
 					text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
@@ -419,10 +419,10 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
-		log.Printf("Webhook ping delivery failed for %s hook_id=%d: %v", l.RepoFullName, l.WebhookID, err)
+		slog.Warn("Webhook ping delivery failed", "repo", l.RepoFullName, "hook_id", l.WebhookID, "error", err)
 		responseText += fmt.Sprintf("\n\n⚠️ GitHub ping delivery failed: %s", html.EscapeString(err.Error()))
 	} else {
-		log.Printf("Webhook ping delivery requested for %s hook_id=%d", l.RepoFullName, l.WebhookID)
+		slog.Info("Webhook ping delivery requested", "repo", l.RepoFullName, "hook_id", l.WebhookID)
 		responseText += "\n\nWebhook URL and secret repaired. GitHub ping delivery requested; you should receive a ping notification shortly."
 	}
 
@@ -635,9 +635,9 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		return nil
 	}
 
-	log.Printf("Webhook test delivery requested for %s hook_id=%d", repo.GetFullName(), webhookID)
+	slog.Info("Webhook test delivery requested", "repo", repo.GetFullName(), "hook_id", webhookID)
 	if err := github.TriggerRepositoryHookTest(context.Background(), client, repo.GetOwner().GetLogin(), repo.GetName(), webhookID); err != nil {
-		log.Printf("Webhook test delivery failed for %s hook_id=%d: %v", repo.GetFullName(), webhookID, err)
+		slog.Warn("Webhook test delivery failed", "repo", repo.GetFullName(), "hook_id", webhookID, "error", err)
 	}
 
 	// Reuse showRepoMenu to let user choose notifications immediately

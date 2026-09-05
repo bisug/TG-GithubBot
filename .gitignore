@@ -1,5 +1,5 @@
 .idea
 .env
 *.exe
-bot
-tg-githubbot
+/bot
+/tg-githubbot

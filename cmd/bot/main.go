@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github-webhook/internal/bot/middleware"
 	"html"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -23,6 +22,7 @@ import (
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
 	"github-webhook/internal/github"
+	"github-webhook/internal/logging"
 	"github-webhook/internal/models"
 	"github-webhook/internal/utils"
 
@@ -33,18 +33,18 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
+	logging.Setup()
 
 	if err := run(); err != nil {
-		log.Fatalf("Application stopped: %v", err)
+		slog.Error("Application stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
 func run() (runErr error) {
 	cfg := config.Load()
 	if cfg.GitHubWebhookSecret == "" {
-		log.Printf("WARNING: GITHUB_WEBHOOK_SECRET is empty — incoming webhook signature verification is DISABLED. Only use this for local development.")
+		slog.Warn("GITHUB_WEBHOOK_SECRET is empty — incoming webhook signature verification is DISABLED. Only use this for local development.")
 	}
 	database, err := db.Connect(cfg)
 	if err != nil {
@@ -81,11 +81,14 @@ func run() (runErr error) {
 
 	dispatcher := ext.NewDispatcher(&ext.DispatcherOpts{
 		Error: func(b *gotgbot.Bot, ctx *ext.Context, err error) ext.DispatcherAction {
-			log.Printf("Error processing update: %v", err)
+			slog.Error("Error processing update", "error", err)
 			return ext.DispatcherActionNoop
 		},
+		Logger: slog.Default().With("component", "gotgbot_dispatcher"),
 	})
-	updater := ext.NewUpdater(dispatcher, nil)
+	updater := ext.NewUpdater(dispatcher, &ext.UpdaterOpts{
+		Logger: slog.Default().With("component", "gotgbot_updater"),
+	})
 	dispatcher.AddHandlerToGroup(handlers.NewMessage(nil, middleware.TrackUserAndChat(database)), -1)
 	dispatcher.AddHandlerToGroup(handlers.NewCallback(nil, middleware.TrackUserAndChat(database)), -1)
 
@@ -158,7 +161,7 @@ func run() (runErr error) {
 
 		telegramID, err := resolveOAuthState(state, oauthStateCache, cfg.EncryptionKey)
 		if err != nil {
-			log.Printf("OAuth callback rejected: %v", err)
+			slog.Warn("OAuth callback rejected", "error", err)
 			http.Error(w, "Invalid or expired state. Please return to Telegram and run /connect again.", http.StatusBadRequest)
 			return
 		}
@@ -174,14 +177,14 @@ func run() (runErr error) {
 
 			token, err := oauth.ExchangeCode(ctx, code)
 			if err != nil {
-				log.Printf("OAuth exchange failed for %d: %v", telegramID, err)
+				slog.Error("OAuth exchange failed", "telegram_id", telegramID, "error", err)
 				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed during token exchange. Please run /connect again.", nil)
 				return
 			}
 
 			encToken, err := utils.Encrypt(token.AccessToken, cfg.EncryptionKey)
 			if err != nil {
-				log.Printf("OAuth encrypt failed for %d: %v", telegramID, err)
+				slog.Error("OAuth encrypt failed", "telegram_id", telegramID, "error", err)
 				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed while securing your token. Please run /connect again.", nil)
 				return
 			}
@@ -189,7 +192,7 @@ func run() (runErr error) {
 			ghClient := clientFactory.GetUserClient(ctx, token.AccessToken)
 			u, _, err := ghClient.Users.Get(ctx, "")
 			if err != nil {
-				log.Printf("OAuth fetch user failed for %d: %v", telegramID, err)
+				slog.Error("OAuth fetch user failed", "telegram_id", telegramID, "error", err)
 				_, _ = b.SendMessage(telegramID, "⚠️ GitHub connection failed while fetching your profile. Please run /connect again.", nil)
 				return
 			}
@@ -201,7 +204,7 @@ func run() (runErr error) {
 				EncryptedOAuthToken: encToken,
 			}
 			if err := database.UpsertUser(ctx, user); err != nil {
-				log.Printf("OAuth DB upsert failed for %d: %v", telegramID, err)
+				slog.Error("OAuth DB upsert failed", "telegram_id", telegramID, "error", err)
 				_, _ = b.SendMessage(telegramID, "⚠️ Connected to GitHub but failed to save your token. Please run /connect again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 				return
 			}
@@ -242,7 +245,7 @@ func run() (runErr error) {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("Server listening on port %s", cfg.Port)
+		slog.Info("Server listening", "port", cfg.Port)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
@@ -254,9 +257,9 @@ func run() (runErr error) {
 	if cfg.UsePolling {
 		// Clear webhook before polling to avoid conflicts
 		if ok, err := b.DeleteWebhook(nil); err != nil {
-			log.Printf("Warning: Failed to delete webhook before polling: %v", err)
+			slog.Warn("Failed to delete webhook before polling", "error", err)
 		} else if ok {
-			log.Printf("Successfully deleted existing webhook before starting polling.")
+			slog.Info("Successfully deleted existing webhook before starting polling")
 		}
 
 		go func() {
@@ -272,31 +275,31 @@ func run() (runErr error) {
 				})
 				if err != nil {
 					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
-						log.Printf("Polling conflict detected (expected during deploy), retrying in 2s...")
+						slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
 						time.Sleep(2 * time.Second)
 						continue
 					}
-					log.Printf("Polling failed: %v. Retrying in 5s...", err)
+					slog.Error("Polling failed; retrying in 5s", "error", err)
 					time.Sleep(5 * time.Second)
 					continue
 				}
 				break
 			}
 		}()
-		log.Printf("Bot started using Polling: @%s", b.User.Username)
+		slog.Info("Bot started using polling", "bot", b.User.Username)
 	} else {
 		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
 		webhookPath := "/bot" + cfg.TelegramToken
 
 		mux.HandleFunc(webhookPath, updater.GetHandlerFunc(""))
-		log.Printf("Registered local Telegram webhook handler for /bot<redacted>")
+		slog.Info("Registered local Telegram webhook handler for /bot<redacted>")
 
 		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
 			MaxConnections:     100,
 			DropPendingUpdates: true,
 		})
 		if err != nil {
-			log.Printf("ERROR: Failed to set Telegram webhook: %v. Falling back to polling...", err)
+			slog.Error("Failed to set Telegram webhook; falling back to polling", "error", err)
 			go func() {
 				for {
 					err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true})
@@ -304,16 +307,16 @@ func run() (runErr error) {
 						return
 					}
 					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
-						log.Printf("Polling conflict detected (expected during deploy), retrying in 2s...")
+						slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
 						time.Sleep(2 * time.Second)
 						continue
 					}
-					log.Printf("Polling fallback failed: %v. Retrying in 5s...", err)
+					slog.Error("Polling fallback failed; retrying in 5s", "error", err)
 					time.Sleep(5 * time.Second)
 				}
 			}()
 		} else {
-			log.Printf("✅ Bot successfully registered Webhook at Telegram: %s/bot<redacted>", webhookBase)
+			slog.Info("Bot successfully registered webhook at Telegram", "url", webhookBase+"/bot<redacted>")
 		}
 	}
 
@@ -344,7 +347,7 @@ func run() (runErr error) {
 
 	select {
 	case <-signalCtx.Done():
-		log.Printf("Shutdown signal received")
+		slog.Info("Shutdown signal received")
 	case err := <-serverErr:
 		if err != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -356,7 +359,7 @@ func run() (runErr error) {
 			}
 			return fmt.Errorf("server failed: %w", err)
 		}
-		log.Printf("Server stopped")
+		slog.Info("Server stopped")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -368,7 +371,7 @@ func run() (runErr error) {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 
-	log.Printf("Shutdown complete")
+	slog.Info("Shutdown complete")
 	return nil
 }
 
