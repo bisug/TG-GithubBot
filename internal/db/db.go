@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github-webhook/internal/config"
@@ -30,6 +32,28 @@ func Connect(cfg *config.Config) (*DB, error) {
 	client, err := mongo.Connect(clientOpts)
 	if err != nil {
 		return nil, err
+	}
+
+	// mongo.Connect is lazy; force a real connection with retries so transient
+	// Atlas unavailability (e.g. a paused M0 cluster waking up) doesn't crash
+	// the process on the first deploy or after a cold start.
+	const attempts = 4
+	var pingErr error
+	for i := 1; i <= attempts; i++ {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		pingErr = client.Ping(pingCtx, nil)
+		cancel()
+		if pingErr == nil {
+			break
+		}
+		slog.Warn("MongoDB ping failed", "attempt", i, "of", attempts, "error", pingErr)
+		if i < attempts {
+			time.Sleep(time.Duration(i*3) * time.Second) // 3s, 6s, 9s backoff
+		}
+	}
+	if pingErr != nil {
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("connect to DB after %d attempts: %w", attempts, pingErr)
 	}
 
 	db := client.Database(cfg.DatabaseName)

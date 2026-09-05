@@ -170,71 +170,45 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 				evt = shortEvt
 			}
 
-			client, err := h.getClient(b, ctx)
-			if err != nil {
-				return nil
-			}
-			repoParts := strings.Split(link.RepoFullName, "/")
-			if len(repoParts) != 2 {
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
-				return nil
-			}
-			owner, repoName := repoParts[0], repoParts[1]
+			expanded := false
+			hook, _, ok := h.setHookEvents(b, ctx, link, func(events []string) []string {
+				// Expand the "*" wildcard so individual toggles are visible
+				// and editable against concrete events.
+				var currentEvents []string
+				for _, e := range events {
+					if e == "*" {
+						expanded = true
+						for _, se := range github.SupportedEvents {
+							currentEvents = append(currentEvents, se.Name)
+						}
+						break
+					}
+					currentEvents = append(currentEvents, e)
+				}
 
-			hook, _, hErr := client.Repositories.GetHook(context.Background(), owner, repoName, link.WebhookID)
-			if hErr != nil {
-				if h.handleAuthError(b, ctx, hErr) {
-					return nil
+				found := false
+				var newEvents []string
+				for _, e := range currentEvents {
+					if e == evt {
+						found = true
+					} else {
+						newEvents = append(newEvents, e)
+					}
 				}
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch GitHub settings.", ShowAlert: true})
-				return nil
-			}
-
-			var currentEvents []string
-			hasWildcard := false
-			for _, e := range hook.Events {
-				if e == "*" {
-					hasWildcard = true
-					break
+				if !found {
+					newEvents = append(newEvents, evt)
 				}
-				currentEvents = append(currentEvents, e)
-			}
-
-			if hasWildcard {
-				for _, se := range github.SupportedEvents {
-					currentEvents = append(currentEvents, se.Name)
-				}
-			}
-
-			found := false
-			var newEvents []string
-			for _, e := range currentEvents {
-				if e == evt {
-					found = true
-				} else {
-					newEvents = append(newEvents, e)
-				}
-			}
-			if !found {
-				newEvents = append(newEvents, evt)
-			}
-
-			hook.Events = newEvents
-			_, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, link.WebhookID, hook)
-			if editErr != nil {
-				if h.handleAuthError(b, ctx, editErr) {
-					return nil
-				}
-				slog.Error("Failed to edit GitHub webhook", "repo", link.RepoFullName, "hook_id", link.WebhookID, "chat", ctx.EffectiveChat.Id, "user", ctx.EffectiveUser.Id, "error", editErr)
-				text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
-				if isNotFoundErr(editErr) {
-					text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
-				}
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
+				return newEvents
+			})
+			if !ok {
 				return nil
 			}
 
-			return h.showIndividualEvents(b, ctx, link, page)
+			note := ""
+			if expanded {
+				note = "\n\n⚠️ The \"all events\" wildcard was expanded to a concrete event list; events added by GitHub in the future may need to be enabled manually."
+			}
+			return h.renderIndividualEvents(b, ctx, link, hook, page, note)
 		} else if action == cbBulkEvents && len(parts) >= 4 {
 			// c:be:linkID:mode (all|mute)
 			return h.handleBulkEvents(b, ctx, link, parts[3])
@@ -365,27 +339,60 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 	return err
 }
 
-func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mode string) error {
+// setHookEvents fetches the webhook, applies mutate to its event list, repairs
+// the hook config (URL/secret) so stale webhook URLs are fixed on any save, and
+// writes it back to GitHub. On failure the user is already notified and
+// (nil, false) is returned.
+func (h *CallbackHandler) setHookEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mutate func(events []string) []string) (*gh.Hook, *gh.Client, bool) {
 	client, err := h.getClient(b, ctx)
 	if err != nil {
-		return nil
+		return nil, nil, false
 	}
 	repoParts := strings.Split(l.RepoFullName, "/")
 	if len(repoParts) != 2 {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
-		return nil
+		return nil, nil, false
 	}
 	owner, repoName := repoParts[0], repoParts[1]
 
 	hook, _, hErr := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
 	if hErr != nil {
 		if h.handleAuthError(b, ctx, hErr) {
-			return nil
+			return nil, nil, false
 		}
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch GitHub hook.", ShowAlert: true})
-		return nil
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch GitHub webhook settings.", ShowAlert: true})
+		return nil, nil, false
 	}
 
+	hook.Events = mutate(hook.Events)
+
+	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
+	if encErr != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error repairing webhook URL.", ShowAlert: true})
+		return nil, nil, false
+	}
+	hook.Config = &gh.HookConfig{
+		URL:         gh.String(fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)),
+		ContentType: gh.String("json"),
+		Secret:      gh.String(h.Config.GitHubWebhookSecret),
+	}
+
+	if _, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook); editErr != nil {
+		if h.handleAuthError(b, ctx, editErr) {
+			return nil, nil, false
+		}
+		slog.Error("Failed to update GitHub webhook", "repo", l.RepoFullName, "hook_id", l.WebhookID, "chat", ctx.EffectiveChat.Id, "error", editErr)
+		text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
+		if isNotFoundErr(editErr) {
+			text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
+		return nil, nil, false
+	}
+	return hook, client, true
+}
+
+func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mode string) error {
 	var newEvents []string
 	var responseText string
 	switch mode {
@@ -405,27 +412,13 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		responseText = fmt.Sprintf("✅ <b>Success!</b> I've updated the repository settings to send <b>%s</b> events.", html.EscapeString(preset.Label))
 	}
 
-	hook.Events = newEvents
-	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
-	if encErr != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error repairing webhook URL.", ShowAlert: true})
+	_, client, ok := h.setHookEvents(b, ctx, l, func([]string) []string { return newEvents })
+	if !ok {
 		return nil
 	}
-	hook.Config = &gh.HookConfig{
-		URL:         gh.String(fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)),
-		ContentType: gh.String("json"),
-		Secret:      gh.String(h.Config.GitHubWebhookSecret),
-	}
-	_, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook)
-	if editErr != nil {
-		if h.handleAuthError(b, ctx, editErr) {
-			return nil
-		}
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to update GitHub hook.", ShowAlert: true})
-		return nil
-	}
+	parts := strings.Split(l.RepoFullName, "/")
 
-	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
+	if err := github.TriggerRepositoryHookPing(context.Background(), client, parts[0], parts[1], l.WebhookID); err != nil {
 		slog.Warn("Webhook ping delivery failed", "repo", l.RepoFullName, "hook_id", l.WebhookID, "error", err)
 		responseText += fmt.Sprintf("\n\n⚠️ GitHub ping delivery failed: %s", html.EscapeString(err.Error()))
 	} else {
@@ -435,12 +428,12 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 
 	kb := ui.Markup(ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        responseText,
 		ReplyMarkup: kb,
 		ParseMode:   "HTML",
 	})
-	return err
+	return nil
 }
 
 // handleBulkEvents applies a bulk event change in a single GitHub API call:
@@ -448,26 +441,6 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 // "mute" disables all notifications while keeping the webhook alive
 // (listening only for pings).
 func (h *CallbackHandler) handleBulkEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mode string) error {
-	client, err := h.getClient(b, ctx)
-	if err != nil {
-		return nil
-	}
-	repoParts := strings.Split(l.RepoFullName, "/")
-	if len(repoParts) != 2 {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
-		return nil
-	}
-	owner, repoName := repoParts[0], repoParts[1]
-
-	hook, _, hErr := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
-	if hErr != nil {
-		if h.handleAuthError(b, ctx, hErr) {
-			return nil
-		}
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch GitHub hook.", ShowAlert: true})
-		return nil
-	}
-
 	var newEvents []string
 	var responseText string
 	switch mode {
@@ -482,27 +455,7 @@ func (h *CallbackHandler) handleBulkEvents(b *gotgbot.Bot, ctx *ext.Context, l *
 		return nil
 	}
 
-	hook.Events = newEvents
-	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
-	if encErr != nil {
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error repairing webhook URL.", ShowAlert: true})
-		return nil
-	}
-	hook.Config = &gh.HookConfig{
-		URL:         gh.String(fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)),
-		ContentType: gh.String("json"),
-		Secret:      gh.String(h.Config.GitHubWebhookSecret),
-	}
-	if _, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook); editErr != nil {
-		if h.handleAuthError(b, ctx, editErr) {
-			return nil
-		}
-		slog.Error("Failed to bulk-edit GitHub webhook", "repo", l.RepoFullName, "hook_id", l.WebhookID, "mode", mode, "chat", ctx.EffectiveChat.Id, "error", editErr)
-		text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
-		if isNotFoundErr(editErr) {
-			text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
-		}
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
+	if _, _, ok := h.setHookEvents(b, ctx, l, func([]string) []string { return newEvents }); !ok {
 		return nil
 	}
 	slog.Info("Bulk event update applied", "repo", l.RepoFullName, "hook_id", l.WebhookID, "mode", mode, "chat", ctx.EffectiveChat.Id)
@@ -515,12 +468,12 @@ func (h *CallbackHandler) handleBulkEvents(b *gotgbot.Bot, ctx *ext.Context, l *
 		ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))),
 	)
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        responseText,
 		ReplyMarkup: kb,
 		ParseMode:   "HTML",
 	})
-	return err
+	return nil
 }
 
 func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, page int) error {
@@ -538,9 +491,8 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil
 	}
-	owner, repoName := parts[0], parts[1]
 
-	hook, _, err := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
+	hook, _, err := client.Repositories.GetHook(context.Background(), parts[0], parts[1], l.WebhookID)
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
@@ -548,6 +500,16 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error fetching webhook settings from GitHub. Check permissions."})
 		return nil
 	}
+
+	return h.renderIndividualEvents(b, ctx, l, hook, page, "")
+}
+
+// renderIndividualEvents edits the message to show the per-event toggle
+// keyboard built from the given (already-fetched) hook, avoiding an extra
+// GitHub API round-trip after every toggle.
+func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, hook *gh.Hook, page int, note string) error {
+	parts := strings.Split(l.RepoFullName, "/")
+	owner, repoName := parts[0], parts[1]
 
 	enabledEvents := make(map[string]bool)
 	if hook != nil {
@@ -610,11 +572,11 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	)))
 	kb = append(kb, ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
-		Text:        fmt.Sprintf("Individual Events for <b>%s</b> (%d/%d enabled). Tap to toggle:", html.EscapeString(l.RepoFullName), enabledCount, len(github.SupportedEvents)),
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Individual Events for <b>%s</b> (%d/%d enabled). Tap to toggle:%s", html.EscapeString(l.RepoFullName), enabledCount, len(github.SupportedEvents), note),
 		ReplyMarkup: ui.Markup(kb...),
 	})
-	return err
+	return nil
 }
 
 func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -624,7 +586,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if len(links) == 0 {
-		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "No repositories linked. Use /addrepo first."})
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "No repositories linked. Use /addrepo first."})
 		return err
 	}
 
@@ -633,11 +595,11 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 		kb = append(kb, ui.Row(ui.RepoSettingsButton(l.RepoFullName, cbRepo(cbRepoMenu, &l))))
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        "Select a repository to configure:",
 		ReplyMarkup: ui.Markup(kb...),
 	})
-	return err
+	return nil
 }
 
 func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page int) error {
@@ -669,12 +631,12 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 		kb = append(kb, navRow)
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        fmt.Sprintf("Select a repository to add (Page %d):", page),
 		ReplyMarkup: ui.Markup(kb...),
 	})
 
-	return err
+	return nil
 }
 
 func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, repoID int64) error {
@@ -718,7 +680,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 			return nil
 		}
 		msg := fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr)
-		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: msg, ParseMode: "HTML"})
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: msg, ParseMode: "HTML"})
 		return err
 	}
 
@@ -744,12 +706,12 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	kb := h.repoMenuButtons(&link)
 
 	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", repo.GetFullName())
-	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        msg,
 		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})
-	return err
+	return nil
 }
 
 func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.InlineKeyboardButton {

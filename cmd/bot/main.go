@@ -255,6 +255,9 @@ func run() (runErr error) {
 
 	// Start Bot (Polling or Webhook)
 	if cfg.UsePolling {
+		slog.Warn("Running in POLLING mode — not recommended for production. " +
+			"Polling breaks if two instances ever run with the same token (Telegram getUpdates conflict) and adds latency. " +
+			"Set TELEGRAM_WEBHOOK_URL to your public HTTPS URL to use webhooks instead.")
 		// Clear webhook before polling to avoid conflicts
 		if ok, err := b.DeleteWebhook(nil); err != nil {
 			slog.Warn("Failed to delete webhook before polling", "error", err)
