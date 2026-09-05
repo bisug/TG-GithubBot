@@ -35,9 +35,9 @@ type CallbackHandler struct {
 func (h *CallbackHandler) getClient(b *gotgbot.Bot, ctx *ext.Context) (*gh.Client, error) {
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
-		msg := "Auth error."
+		msg := "Authentication failed."
 		if errors.Is(err, github.ErrUnauthorized) {
-			msg = "Please /connect to GitHub first."
+			msg = "Please /connect to GitHub first (private chat)."
 		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: msg, ShowAlert: true})
 		return nil, err
@@ -310,6 +310,7 @@ func (h *CallbackHandler) showStopNotificationsConfirm(b *gotgbot.Bot, ctx *ext.
 	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName),
 		ReplyMarkup: kb,
+		ParseMode:   "HTML",
 	})
 	return err
 }
@@ -434,9 +435,9 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
 		if errors.Is(err, github.ErrUnauthorized) {
-			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error: You must be connected to GitHub to view/edit settings."})
+			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error: You must be connected to GitHub to edit settings. Use /connect in a private chat."})
 		} else {
-			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Auth error. Please reconnect."})
+			_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Authentication failed. Please /connect again in a private chat."})
 		}
 		return nil
 	}

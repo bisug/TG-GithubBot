@@ -77,7 +77,7 @@ Need help? Type /help for a full list of commands.`
 
 func (h *CommandHandler) Connect(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate {
-		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ The /connect command can only be used in a private chat with the bot.", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ <b>/connect works only in a private chat with the bot.</b>\nOpen a direct chat and run /connect there.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -106,6 +106,7 @@ func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
 
 func (h *CommandHandler) replyWithConnectButton(b *gotgbot.Bot, ctx *ext.Context, text string, url string) error {
 	_, err := ctx.EffectiveMessage.Reply(b, text, &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
 		ReplyMarkup: ui.Markup(ui.Row(ui.URL("Connect GitHub", url,
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconConnect),
@@ -152,14 +153,14 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 			if urlErr != nil {
 				return urlErr
 			}
-			return h.replyWithConnectButton(b, ctx, fmt.Sprintf("Connect your GitHub account first to link repository %s.", repoFullName), url)
+			return h.replyWithConnectButton(b, ctx, fmt.Sprintf("Connect your GitHub account first to link repository <b>%s</b>.", html.EscapeString(repoFullName)), url)
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ <b>Authentication error.</b>\nPlease reconnect your GitHub account using /connect in a private chat.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 	owner, repo, ok := strings.Cut(repoFullName, "/")
 	if !ok || owner == "" || repo == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Invalid repository format. Use owner/repo", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Invalid repository format.</b>\nUse <code>owner/repo</code>, for example <code>octocat/hello-world</code>.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -180,7 +181,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	token, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
 	if encErr != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Error generating webhook token.", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Error generating webhook token.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -226,7 +227,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error linking repository.", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "❌ <b>Error linking repository.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -238,7 +239,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Printf("Webhook test delivery requested for %s hook_id=%d", repoFullName, webhookID)
 	}
 
-	msg := fmt.Sprintf("Repository <b>%s</b> linked successfully!", repoFullName)
+	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", html.EscapeString(repoFullName))
 	msg += testMsg
 	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
@@ -254,7 +255,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 		if errors.Is(err, gh.ErrUnauthorized) {
 			_, _ = ctx.EffectiveMessage.Reply(b, "Please /connect your GitHub account first to list repositories.", nil)
 		} else {
-			_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+			_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ <b>Authentication error.</b>\nPlease reconnect your GitHub account using /connect in a private chat.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		}
 		return nil
 	}
@@ -269,7 +270,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to fetch repositories from GitHub.", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Failed to fetch repositories from GitHub.</b> Please try again later.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -304,7 +305,7 @@ func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if len(links) == 0 {
-		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked. Use /addrepo first.", nil)
+		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked yet. Use /addrepo to link one.", nil)
 		return err
 	}
 
@@ -326,14 +327,14 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	args := ctx.Args()
 	if len(args) < 2 {
-		_, err := ctx.EffectiveMessage.Reply(b, "Usage: /removerepo owner/repo", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "Usage: <code>/removerepo owner/repo</code>", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
 	repoFullName := args[1]
 	link, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error finding repository link or not found.", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "❌ <b>Repository link not found.</b>\nUse /repos to see your linked repositories.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -367,7 +368,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error removing repository from database.", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "❌ <b>Error removing repository.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 
@@ -382,7 +383,7 @@ func (h *CommandHandler) Repos(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if len(links) == 0 {
-		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked.", nil)
+		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked yet. Use /addrepo to link one.", nil)
 		return err
 	}
 
@@ -451,7 +452,7 @@ If you have questions or concerns, please visit our <a href="https://github.com/
 func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 	err := h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 	if err != nil {
-		_, err = ctx.EffectiveMessage.Reply(b, "Error logging out.", nil)
+		_, err = ctx.EffectiveMessage.Reply(b, "❌ <b>Error logging out.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
 	_, err = ctx.EffectiveMessage.Reply(b, "✅ You have been logged out. Use /connect to reconnect.", nil)
@@ -516,7 +517,7 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("Failed to approve: %v", err), nil)
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to approve:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -554,7 +555,7 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("Failed to update state: %v", err), nil)
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to update the issue/PR:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -577,7 +578,7 @@ func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context
 			_ = h.replyWithConnectButton(b, ctx, "Connect your GitHub account first.", url)
 			return nil, fmt.Errorf("auth required")
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ <b>Authentication error.</b>\nPlease reconnect your GitHub account using /connect in a private chat.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil, err
 	}
 
