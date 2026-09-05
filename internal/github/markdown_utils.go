@@ -2,171 +2,125 @@ package github
 
 import (
 	"fmt"
-	"log/slog"
+	"html"
 	"regexp"
 	"strings"
 
 	"github-webhook/internal/bot/ui"
 
-	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
-	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/strikethrough"
-	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// markdownV2Replacer escapes characters for Telegram's MarkdownV2 format.
-var markdownV2Replacer = strings.NewReplacer(
-	"\\", "\\\\", // Escape backslash first!
-	"_", "\\_",
-	"*", "\\*",
-	"[", "\\[",
-	"]", "\\]",
-	"(", "\\(",
-	")", "\\)",
-	"~", "\\~",
-	"`", "\\`",
-	">", "\\>",
-	"#", "\\#",
-	"+", "\\+",
-	"-", "\\-",
-	"=", "\\=",
-	"|", "\\|",
-	"{", "\\{",
-	"}", "\\}",
-	".", "\\.",
-	"!", "\\!",
-)
-
-// urlReplacer escapes characters for the URL part of a MarkdownV2 link.
-var urlReplacer = strings.NewReplacer(
-	"(", "\\(",
-	")", "\\)",
-)
-
+// Telegram HTML supports a small tag subset; these cover everything we emit.
 var (
-	// emailRe matches angle-bracketed emails that must survive HTML conversion.
-	emailRe = regexp.MustCompile(`<[^> ]+@[^> ]+>`)
-	// protectedSegmentRe matches Markdown links, code spans, and fenced blocks.
-	protectedSegmentRe = regexp.MustCompile("(?s)\\[[^\\]]+\\]\\([^\\)]+\\)|`[^`]+`|```.+?```")
-	// linkRe matches a single Markdown link of the form [text](url).
-	linkRe = regexp.MustCompile(`^\[(.+)\]\((.+)\)$`)
+	// fenceRe matches fenced code blocks in markdown bodies.
+	fenceRe = regexp.MustCompile("(?s)```[a-zA-Z0-9_+-]*\n?(.*?)```")
+	// inlineCodeRe matches `inline code` spans.
+	inlineCodeRe = regexp.MustCompile("`([^`\n]+)`")
+	// mdLinkRe matches [text](url) links.
+	mdLinkRe = regexp.MustCompile(`\[([^\]\n]+)\]\(([^)\s]+)\)`)
+	// boldStarRe matches **bold**, boldUsRe matches __bold__.
+	boldStarRe = regexp.MustCompile(`\*\*([^\n]+?)\*\*`)
+	boldUsRe   = regexp.MustCompile(`__([^\n]+?)__`)
+	// italicRe matches *italic* and _italic_ not embedded in words.
+	italicRe = regexp.MustCompile(`(^|[^\w*<>])[*_]([^*_\n]+?)[*_]([^\w*<>]|$)`)
+	// strikeRe matches ~~strikethrough~~.
+	strikeRe = regexp.MustCompile(`~~([^~\n]+?)~~`)
+	// tagRe strips any remaining HTML tags from plain-text fallbacks.
+	tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
 )
 
-// ConvertHTMLToMarkdown converts HTML to Markdown using the html-to-markdown library.
-func ConvertHTMLToMarkdown(html string) string {
-	conv := converter.NewConverter(
-		converter.WithPlugins(
-			strikethrough.NewStrikethroughPlugin(),
-			table.NewTablePlugin(),
-		),
-	)
-
-	markdown, err := conv.ConvertString(html)
-	if err != nil {
-		slog.Warn("Error converting HTML to Markdown", "error", err)
-		return html
-	}
-
-	return markdown
+// EscapeHTML escapes text for Telegram's HTML parse mode. Only &, < and >
+// are special in text content; html.EscapeString also covers quotes, which
+// is safe (and required inside attribute values).
+func EscapeHTML(text string) string {
+	return html.EscapeString(text)
 }
 
-// EscapeMarkdownV2 escapes characters for Telegram's MarkdownV2 format.
-func EscapeMarkdownV2(text string) string {
-	return markdownV2Replacer.Replace(text)
+// EscapeHTMLURL escapes a URL for use inside an href attribute.
+func EscapeHTMLURL(text string) string {
+	return html.EscapeString(text)
 }
 
-// EscapeMarkdownV2URL escapes characters for the URL part of a MarkdownV2 link.
-func EscapeMarkdownV2URL(text string) string {
-	return urlReplacer.Replace(text)
-}
-
-// FormatTextWithMarkdown preserves Markdown links and code blocks while escaping other special characters.
-// Link anchors are also escaped: an anchor such as "foo.bar" would otherwise break Telegram's
-// MarkdownV2 parser (unescaped ".") and force a plain-text fallback that drops all formatting.
-func FormatTextWithMarkdown(text string) string {
-	var emails []string
-	protectedText := emailRe.ReplaceAllStringFunc(text, func(m string) string {
-		emails = append(emails, m)
-		return fmt.Sprintf("___EMAIL_PLACEHOLDER_%d___", len(emails)-1)
+// MarkdownToTelegramHTML converts a markdown body (GitHub issue/PR/release
+// text) into the Telegram HTML subset. Unconvertible constructs degrade
+// gracefully to plain escaped text.
+func MarkdownToTelegramHTML(body string) string {
+	var fences []string
+	protected := fenceRe.ReplaceAllStringFunc(body, func(m string) string {
+		sub := fenceRe.FindStringSubmatch(m)
+		fences = append(fences, "<pre>"+EscapeHTML(strings.Trim(sub[1], "\n"))+"</pre>")
+		return fmt.Sprintf("\x00FENCE%d\x00", len(fences)-1)
 	})
 
-	markdownText := ConvertHTMLToMarkdown(protectedText)
+	// Escape everything else before adding markup.
+	protected = EscapeHTML(protected)
 
-	for i, email := range emails {
-		placeholder := fmt.Sprintf("___EMAIL_PLACEHOLDER_%d___", i)
-		markdownText = strings.Replace(markdownText, placeholder, email, -1)
-	}
-
-	var originals []string
-	tempBody := protectedSegmentRe.ReplaceAllStringFunc(markdownText, func(match string) string {
-		originals = append(originals, match)
-		return fmt.Sprintf("___PLACEHOLDER_%d___", len(originals)-1)
+	var codes []string
+	protected = inlineCodeRe.ReplaceAllStringFunc(protected, func(m string) string {
+		sub := inlineCodeRe.FindStringSubmatch(m)
+		codes = append(codes, "<code>"+sub[1]+"</code>")
+		return fmt.Sprintf("\x00CODE%d\x00", len(codes)-1)
 	})
 
-	escapedBody := EscapeMarkdownV2(tempBody)
-	for i, original := range originals {
-		placeholder := fmt.Sprintf("___PLACEHOLDER_%d___", i)
-		escapedPlaceholder := EscapeMarkdownV2(placeholder)
-		escapedBody = strings.Replace(escapedBody, escapedPlaceholder, restoreProtectedSegment(original), 1)
-	}
+	protected = mdLinkRe.ReplaceAllString(protected, `<a href="$2">$1</a>`)
+	protected = boldStarRe.ReplaceAllString(protected, "<b>$1</b>")
+	protected = boldUsRe.ReplaceAllString(protected, "<b>$1</b>")
+	protected = italicRe.ReplaceAllString(protected, "$1<i>$2</i>$3")
+	protected = strikeRe.ReplaceAllString(protected, "<s>$1</s>")
 
-	return escapedBody
+	for i, c := range codes {
+		protected = strings.Replace(protected, fmt.Sprintf("\x00CODE%d\x00", i), c, 1)
+	}
+	for i, f := range fences {
+		protected = strings.Replace(protected, fmt.Sprintf("\x00FENCE%d\x00", i), f, 1)
+	}
+	return strings.TrimSpace(protected)
 }
 
-// restoreProtectedSegment returns a MarkdownV2-safe form of a protected segment. Links get their
-// anchor and URL escaped; code spans/fenced blocks are returned verbatim (their contents are literal).
-func restoreProtectedSegment(segment string) string {
-	if text, url, ok := parseMarkdownLink(segment); ok {
-		return fmt.Sprintf("[%s](%s)", EscapeMarkdownV2(text), EscapeMarkdownV2URL(url))
+// FormatTextWithMarkdown renders a GitHub markdown body as Telegram HTML.
+func FormatTextWithMarkdown(body string) string {
+	if body == "" {
+		return ""
 	}
-	return segment
+	return MarkdownToTelegramHTML(body)
 }
 
-func parseMarkdownLink(segment string) (text, url string, ok bool) {
-	m := linkRe.FindStringSubmatch(segment)
-	if m == nil {
-		return "", "", false
-	}
-	return m[1], m[2], true
-}
-
+// FormatReleaseBody renders a release notes body, collapsing long bodies
+// behind a spoiler. Short bodies are shown as a blockquote.
 func FormatReleaseBody(body string) string {
-	formattedText := FormatTextWithMarkdown(body)
-	lines := strings.Split(formattedText, "\n")
+	htmlBody := FormatTextWithMarkdown(body)
+	lines := strings.Split(htmlBody, "\n")
 	const maxLines = 10
 	const maxChars = 800
-	isLong := len(lines) > maxLines || len(formattedText) > maxChars
-
-	var finalBody strings.Builder
+	isLong := len(lines) > maxLines || len(htmlBody) > maxChars
 
 	if !isLong {
-		for _, line := range lines {
-			finalBody.WriteString(">" + line + "\n")
-		}
-		return strings.TrimSuffix(finalBody.String(), "\n")
+		return "<blockquote>" + htmlBody + "</blockquote>"
 	}
 
-	splitIndex := 5
-
-	for i := 0; i < splitIndex && i < len(lines); i++ {
-		finalBody.WriteString(">" + lines[i] + "\n")
-	}
-
-	finalBody.WriteString("||\n")
-
-	for i := splitIndex; i < len(lines); i++ {
-		finalBody.WriteString(">" + lines[i] + "\n")
-	}
-
-	return strings.TrimSuffix(finalBody.String(), "\n") + "||"
+	head := strings.Join(lines[:5], "\n")
+	tail := strings.Join(lines[5:], "\n")
+	return "<blockquote>" + head + "</blockquote><tg-spoiler>" + tail + "</tg-spoiler>"
 }
 
+// FormatRepo renders a repo name as a link to the repository.
 func FormatRepo(repoFullName string) string {
-	return fmt.Sprintf("[%s](https://github.com/%s)", EscapeMarkdownV2(repoFullName), EscapeMarkdownV2URL(repoFullName))
+	return fmt.Sprintf(`<a href="https://github.com/%s">%s</a>`,
+		EscapeHTMLURL(repoFullName), EscapeHTML(repoFullName))
 }
 
+// FormatUser renders a login as a link to the profile.
 func FormatUser(userLogin string) string {
-	return fmt.Sprintf("[%s](https://github.com/%s)", EscapeMarkdownV2(userLogin), EscapeMarkdownV2URL(userLogin))
+	return fmt.Sprintf(`<a href="https://github.com/%s">%s</a>`,
+		EscapeHTMLURL(userLogin), EscapeHTML(userLogin))
+}
+
+// StripTelegramHTML converts an HTML message to plain text for the
+// no-format fallback send.
+func StripTelegramHTML(s string) string {
+	s = tagRe.ReplaceAllString(s, "")
+	return html.UnescapeString(s)
 }
 
 func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *gotgbot.InlineKeyboardMarkup) {

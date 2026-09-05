@@ -15,45 +15,30 @@ var SupportedEvents = []Event{
 	{Name: "commit_comment", Label: "Commit comments", Short: "cc"},
 	{Name: "content_reference", Label: "Content references", Short: "ctr"},
 	{Name: "create", Label: "Branches and tags created", Short: "crt"},
-	{Name: "custom_property", Label: "Custom properties", Short: "cp"},
 	{Name: "custom_property_values", Label: "Custom property values", Short: "cpv"},
 	{Name: "delete", Label: "Branches and tags deleted", Short: "del"},
 	{Name: "dependabot_alert", Label: "Dependabot alerts", Short: "da"},
 	{Name: "deploy_key", Label: "Deploy keys", Short: "dk"},
 	{Name: "deployment", Label: "Deployments", Short: "dep"},
-	{Name: "deployment_protection_rule", Label: "Deployment protection rules", Short: "dpr"},
-	{Name: "deployment_review", Label: "Deployment reviews", Short: "drv"},
 	{Name: "deployment_status", Label: "Deployment statuses", Short: "ds"},
 	{Name: "discussion", Label: "Discussions", Short: "dis"},
 	{Name: "discussion_comment", Label: "Discussion comments", Short: "dc"},
 	{Name: "fork", Label: "Forks", Short: "f"},
-	{Name: "github_app_authorization", Label: "GitHub App authorizations", Short: "gaa"},
 	{Name: "gollum", Label: "Wikis", Short: "g"},
-	{Name: "installation", Label: "Installations", Short: "ins"},
-	{Name: "installation_repositories", Label: "Installation repositories", Short: "ir"},
-	{Name: "installation_target", Label: "Installation targets", Short: "it"},
 	{Name: "issue_comment", Label: "Issue and PR comments", Short: "ic"},
 	{Name: "issue_dependencies", Label: "Issue dependencies", Short: "idp"},
 	{Name: "issues", Label: "Issues", Short: "i"},
 	{Name: "label", Label: "Labels", Short: "lbl"},
-	{Name: "marketplace_purchase", Label: "Marketplace purchases", Short: "mp"},
 	{Name: "member", Label: "Repository collaborators", Short: "m"},
-	{Name: "membership", Label: "Organization memberships", Short: "mem"},
 	{Name: "merge_group", Label: "Merge queue groups", Short: "mg"},
 	{Name: "meta", Label: "Webhook lifecycle", Short: "mt"},
 	{Name: "milestone", Label: "Milestones", Short: "ms"},
-	{Name: "organization", Label: "Organizations", Short: "org"},
-	{Name: "org_block", Label: "Organization blocks", Short: "ob"},
 	{Name: "package", Label: "Packages", Short: "pkg"},
 	{Name: "page_build", Label: "GitHub Pages builds", Short: "pb"},
-	{Name: "personal_access_token_request", Label: "PAT requests", Short: "pat"},
 	{Name: "ping", Label: "Webhook pings", Short: "ping"},
 	{Name: "project", Label: "Projects classic", Short: "pj"},
 	{Name: "project_card", Label: "Project cards", Short: "pcd"},
 	{Name: "project_column", Label: "Project columns", Short: "pco"},
-	{Name: "projects_v2", Label: "Projects v2", Short: "pv2"},
-	{Name: "projects_v2_item", Label: "Project v2 items", Short: "pvi"},
-	{Name: "projects_v2_status_update", Label: "Project v2 status updates", Short: "pvs"},
 	{Name: "public", Label: "Repository visibility", Short: "pub"},
 	{Name: "pull_request", Label: "Pull requests", Short: "pr"},
 	{Name: "pull_request_review", Label: "Pull request reviews", Short: "prr"},
@@ -65,24 +50,19 @@ var SupportedEvents = []Event{
 	{Name: "release", Label: "Releases", Short: "rel"},
 	{Name: "repository", Label: "Repository changes", Short: "rep"},
 	{Name: "repository_advisory", Label: "Repository advisories", Short: "rad"},
-	{Name: "repository_dispatch", Label: "Repository dispatches", Short: "rd"},
 	{Name: "repository_import", Label: "Repository imports", Short: "ri"},
 	{Name: "repository_ruleset", Label: "Repository rulesets", Short: "rr"},
 	{Name: "repository_vulnerability_alert", Label: "Vulnerability alerts", Short: "rva"},
 	{Name: "secret_scanning_alert", Label: "Secret scanning alerts", Short: "ssa"},
 	{Name: "secret_scanning_alert_location", Label: "Secret scanning locations", Short: "ssl"},
 	{Name: "secret_scanning_scan", Label: "Secret scanning scans", Short: "sss"},
-	{Name: "security_advisory", Label: "Security advisories", Short: "sa"},
 	{Name: "security_and_analysis", Label: "Security and analysis", Short: "saa"},
-	{Name: "sponsorship", Label: "Sponsorships", Short: "sp"},
 	{Name: "star", Label: "Stars", Short: "s"},
 	{Name: "status", Label: "Commit statuses", Short: "st"},
 	{Name: "sub_issues", Label: "Sub-issues", Short: "sub"},
-	{Name: "team", Label: "Teams", Short: "tm"},
 	{Name: "team_add", Label: "Team repository access", Short: "ta"},
 	{Name: "user", Label: "Users", Short: "u"},
 	{Name: "watch", Label: "Watches", Short: "w"},
-	{Name: "workflow_dispatch", Label: "Workflow dispatches", Short: "wd"},
 	{Name: "workflow_job", Label: "Workflow jobs", Short: "wj"},
 	{Name: "workflow_run", Label: "Workflow runs", Short: "wr"},
 }
@@ -108,7 +88,7 @@ var EventPresets = map[string]Preset{
 	},
 	"security": {
 		Label:  "Security alerts",
-		Events: []string{"secret_scanning_alert", "secret_scanning_alert_location", "dependabot_alert", "security_advisory", "repository_advisory", "code_scanning_alert"},
+		Events: []string{"secret_scanning_alert", "secret_scanning_alert_location", "dependabot_alert", "repository_advisory", "code_scanning_alert"},
 	},
 }
 
@@ -116,4 +96,42 @@ var EventPresets = map[string]Preset{
 type Preset struct {
 	Label  string
 	Events []string
+}
+
+// RepoHookForbiddenEvents are event types GitHub rejects when set on a
+// repository webhook (they only apply to GitHub App or org-level hooks).
+// Sending any of these in an EditHook call returns 422 Validation Failed.
+var RepoHookForbiddenEvents = map[string]bool{
+	"custom_property":               true,
+	"deployment_protection_rule":    true,
+	"deployment_review":             true,
+	"github_app_authorization":      true,
+	"installation":                  true,
+	"installation_repositories":     true,
+	"installation_target":           true,
+	"marketplace_purchase":          true,
+	"membership":                    true,
+	"organization":                  true,
+	"org_block":                     true,
+	"personal_access_token_request": true,
+	"projects_v2":                   true,
+	"projects_v2_item":              true,
+	"projects_v2_status_update":     true,
+	"repository_dispatch":           true,
+	"security_advisory":             true,
+	"sponsorship":                   true,
+	"team":                          true,
+	"workflow_dispatch":             true,
+}
+
+// FilterRepoHookEvents removes events GitHub does not allow on repository
+// webhooks, so saves never fail with 422 Validation Failed.
+func FilterRepoHookEvents(events []string) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		if !RepoHookForbiddenEvents[e] {
+			out = append(out, e)
+		}
+	}
+	return out
 }

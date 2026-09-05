@@ -5,107 +5,38 @@ import (
 	"testing"
 )
 
-func TestEscapeMarkdownV2(t *testing.T) {
+func TestEscapeHTML(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
 	}{
-		{
-			input:    "Hello World",
-			expected: "Hello World",
-		},
-		{
-			input:    "Hello_World",
-			expected: "Hello\\_World",
-		},
-		{
-			input:    "[]()~`>#+-=|{}.!",
-			expected: "\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!",
-		},
-		{
-			input:    "Backslash \\ test",
-			expected: "Backslash \\\\ test",
-		},
+		{"Hello World", "Hello World"},
+		{"a < b & c > d", "a &lt; b &amp; c &gt; d"},
+		{"quotes \"here\"", "quotes &#34;here&#34;"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			if got := EscapeMarkdownV2(tt.input); got != tt.expected {
-				t.Errorf("EscapeMarkdownV2() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestEscapeMarkdownV2URL(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{
-			input:    "https://example.com",
-			expected: "https://example.com",
-		},
-		{
-			input:    "https://example.com/foo(bar)",
-			expected: "https://example.com/foo\\(bar\\)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			if got := EscapeMarkdownV2URL(tt.input); got != tt.expected {
-				t.Errorf("EscapeMarkdownV2URL() = %v, want %v", got, tt.expected)
+			if got := EscapeHTML(tt.input); got != tt.expected {
+				t.Errorf("EscapeHTML() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
 func TestFormatRepo(t *testing.T) {
-	tests := []struct {
-		repo     string
-		expected string
-	}{
-		{
-			repo:     "owner/repo",
-			expected: "[owner/repo](https://github.com/owner/repo)",
-		},
-		{
-			repo:     "owner/my_repo",
-			expected: "[owner/my\\_repo](https://github.com/owner/my_repo)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.repo, func(t *testing.T) {
-			if got := FormatRepo(tt.repo); got != tt.expected {
-				t.Errorf("FormatRepo() = %v, want %v", got, tt.expected)
-			}
-		})
+	got := FormatRepo("owner/my_repo")
+	want := `<a href="https://github.com/owner/my_repo">owner/my_repo</a>`
+	if got != want {
+		t.Errorf("FormatRepo() = %v, want %v", got, want)
 	}
 }
 
 func TestFormatUser(t *testing.T) {
-	tests := []struct {
-		user     string
-		expected string
-	}{
-		{
-			user:     "octocat",
-			expected: "[octocat](https://github.com/octocat)",
-		},
-		{
-			user:     "user_name",
-			expected: "[user\\_name](https://github.com/user_name)",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.user, func(t *testing.T) {
-			if got := FormatUser(tt.user); got != tt.expected {
-				t.Errorf("FormatUser() = %v, want %v", got, tt.expected)
-			}
-		})
+	got := FormatUser("user_name")
+	want := `<a href="https://github.com/user_name">user_name</a>`
+	if got != want {
+		t.Errorf("FormatUser() = %v, want %v", got, want)
 	}
 }
 
@@ -130,58 +61,39 @@ func TestShortSHA(t *testing.T) {
 	}
 }
 
-func TestFormatReleaseBody(t *testing.T) {
-	t.Run("Short body", func(t *testing.T) {
-		body := "Short release notes"
-		got := FormatReleaseBody(body)
-		if strings.Contains(got, "||") {
-			t.Errorf("FormatReleaseBody() unexpected spoiler tag for short body")
-		}
-		if !strings.HasPrefix(got, ">") {
-			t.Errorf("FormatReleaseBody() expected blockquote prefix")
-		}
-	})
+func TestFormatReleaseBodyLongUsesSpoiler(t *testing.T) {
+	var lines []string
+	for i := 0; i < 15; i++ {
+		lines = append(lines, "line")
+	}
+	got := FormatReleaseBody(strings.Join(lines, "\n"))
 
-	t.Run("Long body", func(t *testing.T) {
-		// Create a body with more than 10 lines
-		var lines []string
-		for i := 0; i < 15; i++ {
-			lines = append(lines, "line")
-		}
-		body := strings.Join(lines, "\n")
-		got := FormatReleaseBody(body)
-
-		if !strings.HasSuffix(got, "||") {
-			t.Errorf("FormatReleaseBody() expected spoiler tag at end for long body")
-		}
-		if !strings.Contains(got, "||\n>") {
-			t.Errorf("FormatReleaseBody() expected spoiler tag in middle")
-		}
-	})
+	if strings.Contains(got, "||") {
+		t.Errorf("FormatReleaseBody() should not emit markdown spoilers in HTML mode")
+	}
+	if !strings.Contains(got, "<blockquote>") || !strings.Contains(got, "<tg-spoiler>") {
+		t.Errorf("FormatReleaseBody() = %q, want blockquote + spoiler", got)
+	}
 }
 
-// An unescaped link anchor (e.g. a "." in "release.v2") makes Telegram's MarkdownV2
-// parser reject the whole message, forcing a plain-text fallback that drops all styling.
-func TestFormatTextWithMarkdownEscapesLinkAnchor(t *testing.T) {
-	in := "See [release.v2.1](https://github.com/o/r/releases/tag/v2.1) for details."
-	want := "See [release\\.v2\\.1](https://github.com/o/r/releases/tag/v2.1) for details\\."
-	if got := FormatTextWithMarkdown(in); got != want {
-		t.Fatalf("FormatTextWithMarkdown() = %q, want %q", got, want)
+func TestFormatTextWithMarkdownRendersLinksAndEscapesText(t *testing.T) {
+	in := "See [release.v2.1](https://github.com/o/r/releases/tag/v2.1) for <details>."
+	got := FormatTextWithMarkdown(in)
+
+	if !strings.Contains(got, `<a href="https://github.com/o/r/releases/tag/v2.1">release.v2.1</a>`) {
+		t.Fatalf("FormatTextWithMarkdown() = %q, want link preserved", got)
+	}
+	if strings.Contains(got, "<details>") {
+		t.Fatalf("FormatTextWithMarkdown() = %q, want raw HTML escaped", got)
+	}
+	if !strings.Contains(got, "&lt;details&gt;") {
+		t.Fatalf("FormatTextWithMarkdown() = %q, want escaped angle brackets", got)
 	}
 }
 
 func TestFormatTextWithMarkdownKeepsCodeVerbatim(t *testing.T) {
-	in := "Run `go test ./...` and check `a.b` inline."
-	want := "Run `go test ./...` and check `a.b` inline\\."
-	if got := FormatTextWithMarkdown(in); got != want {
-		t.Fatalf("code spans should pass through unchanged, got %q", got)
-	}
-}
-
-func TestFormatTextWithMarkdownEscapesBodySpecials(t *testing.T) {
-	in := "Fix a.b and call me (soon)! Use ~strike~."
-	want := "Fix a\\.b and call me \\(soon\\)\\! Use \\~strike\\~\\."
-	if got := FormatTextWithMarkdown(in); got != want {
-		t.Fatalf("FormatTextWithMarkdown() = %q, want %q", got, want)
+	got := FormatTextWithMarkdown("Run `go test <here>` now")
+	if !strings.Contains(got, "<code>go test &lt;here&gt;</code>") {
+		t.Fatalf("code spans should render as escaped <code>, got %q", got)
 	}
 }

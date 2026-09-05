@@ -149,7 +149,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		defer s.Wg.Done()
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				slog.Error("Webhook processing panic", "event", eventType, "delivery", deliveryID, "hook_id", hookID, "chat", chatID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "panic", recovered)
+				slog.Error("Webhook processing panic", "event", eventType, "delivery", deliveryID, "hook_id", hookID, "chat", chatID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "panic", recovered)
 			}
 		}()
 
@@ -176,7 +176,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	msg, markup := s.formatMessage(event)
 	markup = s.withPRActionButtons(event, markup)
 	if msg == "" {
-		slog.Info("Webhook skipped: empty formatted message", "event", eventType, "delivery", deliveryID, "chat", chatID, "elapsed", time.Since(receivedAt).Round(time.Millisecond))
+		slog.Info("Webhook skipped: empty formatted message", "event", eventType, "delivery", deliveryID, "chat", chatID, "elapsed_ms", time.Since(receivedAt).Milliseconds())
 		return
 	}
 
@@ -205,7 +205,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	s.storeMessageContext(sentMsg.MessageId, chatID, event)
-	slog.Info("Webhook delivered", "chat", chatID, "event", eventType, "delivery", deliveryID, "message_id", sentMsg.MessageId, "elapsed", time.Since(receivedAt).Round(time.Millisecond))
+	slog.Info("Webhook delivered", "chat", chatID, "event", eventType, "delivery", deliveryID, "message_id", sentMsg.MessageId, "elapsed_ms", time.Since(receivedAt).Milliseconds())
 }
 
 // requestTimeout is how long a single sendMessage HTTP call to Telegram may run.
@@ -233,7 +233,7 @@ func (s *WebhookServer) sendEventMessage(chatID, threadID int64, msg string, mar
 	s.Pacer.Wait(chatID, threadID)
 
 	opts := &gotgbot.SendMessageOpts{
-		ParseMode: "MarkdownV2",
+		ParseMode: "HTML",
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
 			IsDisabled: true,
 		},
@@ -267,7 +267,7 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 				time.Sleep(retryAfter)
 				continue
 			}
-			slog.Error("Error sending message (rate limited, gave up)", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
+			slog.Error("Error sending message (rate limited, gave up)", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "error", err)
 			return nil, err
 		}
 
@@ -279,16 +279,16 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 		}
 
 		if isMarkdownParseError(err) {
-			slog.Warn("Markdown send failed; retrying plain text", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
+			slog.Warn("HTML send failed; retrying plain text", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
 			fallbackOpts := &gotgbot.SendMessageOpts{
 				LinkPreviewOptions: opts.LinkPreviewOptions,
 				ReplyMarkup:        opts.ReplyMarkup,
 				MessageThreadId:    opts.MessageThreadId,
 				RequestOpts:        opts.RequestOpts,
 			}
-			sent, fallbackErr := s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
+			sent, fallbackErr := s.Bot.SendMessage(chatID, StripTelegramHTML(msg), fallbackOpts)
 			if fallbackErr != nil {
-				slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
+				slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "error", err)
 				return nil, fallbackErr
 			}
 			return sent, nil
@@ -301,7 +301,7 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 			time.Sleep(backoff)
 			continue
 		}
-		slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed", time.Since(receivedAt).Round(time.Millisecond), "error", err)
+		slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "error", err)
 		return nil, err
 	}
 	return nil, lastErr
@@ -330,56 +330,6 @@ func isChatNotFound(err error) bool {
 // isMarkdownParseError reports whether err is a Telegram 400 caused by markdown
 // syntax that Telegram could not parse. Only these errors should fall back to
 // plain text.
-func isMarkdownParseError(err error) bool {
-	var te *gotgbot.TelegramError
-	if !errors.As(err, &te) || te.Code != http.StatusBadRequest {
-		return false
-	}
-	d := strings.ToLower(te.Description)
-	return strings.Contains(d, "can't parse") ||
-		strings.Contains(d, "parse entities") ||
-		strings.Contains(d, "entities") ||
-		strings.Contains(d, "button") ||
-		strings.Contains(d, "markup")
-}
-
-// normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
-func normalizeMessage(s string) string {
-	if s == "" {
-		return s
-	}
-
-	lines := strings.Split(s, "\n")
-	for i, ln := range lines {
-		lines[i] = strings.TrimRight(ln, " \t")
-	}
-	out := strings.Join(lines, "\n")
-
-	out = multipleNewlinesRegex.ReplaceAllString(out, "\n\n")
-
-	out = strings.TrimSpace(out)
-	return out
-}
-
-func plainTextForTelegram(s string) string {
-	s = markdownLinkPattern.ReplaceAllString(s, "$1 ($2)")
-	replacer := strings.NewReplacer(
-		"\\", "",
-		"*", "",
-		"_", "",
-		"`", "",
-		"~", "",
-		"||", "",
-	)
-	s = replacer.Replace(s)
-	const maxTelegramText = 4096
-	runes := []rune(s)
-	if len(runes) <= maxTelegramText {
-		return s
-	}
-	return string(runes[:maxTelegramText-1]) + "…"
-}
-
 func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event interface{}) {
 	key := fmt.Sprintf("%d:%d", chatID, messageID)
 	var ctx models.MessageContext
@@ -480,6 +430,37 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 	markup.InlineKeyboard = append(markup.InlineKeyboard, row)
 	return markup
+}
+
+func isMarkdownParseError(err error) bool {
+	var te *gotgbot.TelegramError
+	if !errors.As(err, &te) || te.Code != http.StatusBadRequest {
+		return false
+	}
+	d := strings.ToLower(te.Description)
+	return strings.Contains(d, "can't parse") ||
+		strings.Contains(d, "parse entities") ||
+		strings.Contains(d, "entities") ||
+		strings.Contains(d, "button") ||
+		strings.Contains(d, "markup")
+}
+
+// normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
+func normalizeMessage(s string) string {
+	if s == "" {
+		return s
+	}
+
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t")
+	}
+	out := strings.Join(lines, "\n")
+
+	out = multipleNewlinesRegex.ReplaceAllString(out, "\n\n")
+
+	out = strings.TrimSpace(out)
+	return out
 }
 
 func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *gotgbot.InlineKeyboardMarkup) {

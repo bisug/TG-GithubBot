@@ -64,7 +64,7 @@ func FormatGenericWebhookEvent(event *GenericWebhookEvent) (string, *gotgbot.Inl
 		title += " " + titleText(event.Action)
 	}
 
-	msg := fmt.Sprintf("📬 *%s*\n\n", EscapeMarkdownV2(title))
+	msg := fmt.Sprintf("📬 *%s*\n\n", EscapeHTML(title))
 	var buttonURL string
 
 	if repo := event.Repository; repo != nil {
@@ -92,7 +92,7 @@ func FormatGenericWebhookEvent(event *GenericWebhookEvent) (string, *gotgbot.Inl
 	}
 
 	if event.Action != "" {
-		msg += fmt.Sprintf("*Action:* `%s`", EscapeMarkdownV2(event.Action))
+		msg += fmt.Sprintf("*Action:* `%s`", EscapeHTML(event.Action))
 	}
 
 	return FormatMessageWithButton(strings.TrimSpace(msg), "View on GitHub", buttonURL)

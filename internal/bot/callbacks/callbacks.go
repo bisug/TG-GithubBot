@@ -364,7 +364,7 @@ func (h *CallbackHandler) setHookEvents(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		return nil, nil, false
 	}
 
-	hook.Events = mutate(hook.Events)
+	hook.Events = github.FilterRepoHookEvents(mutate(hook.Events))
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
 	if encErr != nil {

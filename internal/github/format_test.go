@@ -48,24 +48,70 @@ func TestFormatPushEventCapsCommitListAndUsesFirstLine(t *testing.T) {
 		Commits: commits,
 	})
 
-	if strings.Count(msg, "\\- [0123456]") != 10 {
-		t.Fatalf("FormatPushEvent listed %d commits, want 10", strings.Count(msg, "\\- [0123456]"))
+	if strings.Count(msg, "- <a href=") != 10 {
+		t.Fatalf("FormatPushEvent listed %d commits, want 10", strings.Count(msg, "- <a href="))
 	}
 	if strings.Contains(msg, "slow body") {
 		t.Fatalf("FormatPushEvent included commit body: %q", msg)
 	}
-	if !strings.Contains(msg, "\\+2 more commits not shown") {
+	if !strings.Contains(msg, "+2 more commits not shown") {
 		t.Fatalf("FormatPushEvent message = %q, want remaining commit count", msg)
 	}
 }
 
-func TestPlainTextForTelegramRemovesMarkdownControlCharacters(t *testing.T) {
-	got := plainTextForTelegram("*Title* [repo](https://github.com/owner/repo) \\_escaped\\_")
+func TestStripTelegramHTMLRemovesTagsAndDecodesEntities(t *testing.T) {
+	got := StripTelegramHTML("<b>Title</b> &amp; <a href=\"https://github.com/owner/repo\">repo</a>")
 
-	if strings.ContainsAny(got, "*_`~\\") {
-		t.Fatalf("plainTextForTelegram() = %q, want Markdown control characters removed", got)
+	if strings.ContainsAny(got, "<>") {
+		t.Fatalf("StripTelegramHTML() = %q, want HTML tags removed", got)
 	}
-	if !strings.Contains(got, "repo (https://github.com/owner/repo)") {
-		t.Fatalf("plainTextForTelegram() = %q, want link text preserved", got)
+	if !strings.Contains(got, "Title & repo") {
+		t.Fatalf("StripTelegramHTML() = %q, want entities decoded and text preserved", got)
+	}
+}
+
+func TestMarkdownToTelegramHTML(t *testing.T) {
+	got := MarkdownToTelegramHTML("**bold** and *italic* with `code` and [link](https://example.com)\n\n```go\nfmt.Println(\"hi <>&\")\n```")
+
+	for _, want := range []string{
+		"<b>bold</b>",
+		"<i>italic</i>",
+		"<code>code</code>",
+		`<a href="https://example.com">link</a>`,
+		"<pre>",
+		"fmt.Println(&#34;hi &lt;&gt;&amp;&#34;)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("MarkdownToTelegramHTML() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestFormatReleaseBodyShortUsesBlockquote(t *testing.T) {
+	got := FormatReleaseBody("Short notes")
+	if !strings.HasPrefix(got, "<blockquote>") || !strings.HasSuffix(got, "</blockquote>") {
+		t.Fatalf("FormatReleaseBody() = %q, want blockquote wrapping", got)
+	}
+}
+
+func TestFilterRepoHookEvents(t *testing.T) {
+	got := FilterRepoHookEvents([]string{"push", "organization", "workflow_run", "security_advisory"})
+	if len(got) != 2 || got[0] != "push" || got[1] != "workflow_run" {
+		t.Fatalf("FilterRepoHookEvents() = %v, want [push workflow_run]", got)
+	}
+}
+
+func TestSupportedEventsAndPresetsAreRepoHookAllowed(t *testing.T) {
+	for _, e := range SupportedEvents {
+		if RepoHookForbiddenEvents[e.Name] {
+			t.Errorf("SupportedEvents contains repo-forbidden event %q", e.Name)
+		}
+	}
+	for name, p := range EventPresets {
+		for _, e := range p.Events {
+			if RepoHookForbiddenEvents[e] {
+				t.Errorf("preset %q contains repo-forbidden event %q", name, e)
+			}
+		}
 	}
 }
