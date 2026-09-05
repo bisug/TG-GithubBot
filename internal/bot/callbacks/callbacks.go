@@ -224,7 +224,12 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 				if h.handleAuthError(b, ctx, editErr) {
 					return nil
 				}
-				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to update GitHub.", ShowAlert: true})
+				log.Printf("Failed to edit GitHub webhook for %s hook_id=%d chat=%d user=%d error=%v", link.RepoFullName, link.WebhookID, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, editErr)
+				text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
+				if isNotFoundErr(editErr) {
+					text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
+				}
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
 				return nil
 			}
 
@@ -746,4 +751,13 @@ func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err 
 		}
 	}
 	return false
+}
+
+// isNotFoundErr reports whether err is a GitHub 404 API response. GitHub returns
+// 404 both when the resource truly does not exist and, deliberately, when the
+// connected account lacks permission to see/manage it (e.g. editing a webhook on
+// a repo the account is not an admin of).
+func isNotFoundErr(err error) bool {
+	var errResp *gh.ErrorResponse
+	return errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound
 }
