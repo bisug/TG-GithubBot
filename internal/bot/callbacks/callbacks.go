@@ -72,6 +72,7 @@ const (
 	cbRepoMenu       = "r"
 	cbAddRepo        = "ar"
 	cbToggleEvent    = "te"
+	cbBulkEvents     = "be"
 	cbPresets        = "presets"
 	cbIndividual     = "iev"
 	cbStop           = "stop"
@@ -234,6 +235,9 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			}
 
 			return h.showIndividualEvents(b, ctx, link, page)
+		} else if action == cbBulkEvents && len(parts) >= 4 {
+			// c:be:linkID:mode (all|mute)
+			return h.handleBulkEvents(b, ctx, link, parts[3])
 		} else if action == cbPresets && len(parts) >= 3 {
 			// c:presets:linkID:mode
 			// mode: push, all
@@ -383,14 +387,22 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	var newEvents []string
+	var responseText string
 	switch mode {
 	case "push":
 		newEvents = []string{"push"}
+		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>push events only</b>."
 	case "all":
 		newEvents = []string{"*"}
+		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>everything</b>."
 	default:
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown preset."})
-		return nil
+		preset, ok := github.EventPresets[mode]
+		if !ok {
+			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown preset."})
+			return nil
+		}
+		newEvents = preset.Events
+		responseText = fmt.Sprintf("✅ <b>Success!</b> I've updated the repository settings to send <b>%s</b> events.", html.EscapeString(preset.Label))
 	}
 
 	hook.Events = newEvents
@@ -413,11 +425,6 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		return nil
 	}
 
-	responseText := "✅ <b>Success!</b> I've updated the repository settings to send <b>everything</b>."
-	if mode == "push" {
-		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>push events only</b>."
-	}
-
 	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repoName, l.WebhookID); err != nil {
 		slog.Warn("Webhook ping delivery failed", "repo", l.RepoFullName, "hook_id", l.WebhookID, "error", err)
 		responseText += fmt.Sprintf("\n\n⚠️ GitHub ping delivery failed: %s", html.EscapeString(err.Error()))
@@ -427,6 +434,86 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	}
 
 	kb := ui.Markup(ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
+
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        responseText,
+		ReplyMarkup: kb,
+		ParseMode:   "HTML",
+	})
+	return err
+}
+
+// handleBulkEvents applies a bulk event change in a single GitHub API call:
+// mode "all" enables every supported event (via the "*" wildcard), and mode
+// "mute" disables all notifications while keeping the webhook alive
+// (listening only for pings).
+func (h *CallbackHandler) handleBulkEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, mode string) error {
+	client, err := h.getClient(b, ctx)
+	if err != nil {
+		return nil
+	}
+	repoParts := strings.Split(l.RepoFullName, "/")
+	if len(repoParts) != 2 {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
+		return nil
+	}
+	owner, repoName := repoParts[0], repoParts[1]
+
+	hook, _, hErr := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
+	if hErr != nil {
+		if h.handleAuthError(b, ctx, hErr) {
+			return nil
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to fetch GitHub hook.", ShowAlert: true})
+		return nil
+	}
+
+	var newEvents []string
+	var responseText string
+	switch mode {
+	case "all":
+		newEvents = []string{"*"}
+		responseText = "✅ <b>All events enabled.</b> GitHub will now send everything for this repository."
+	case "mute":
+		newEvents = []string{"ping"}
+		responseText = "🔕 <b>All notifications muted.</b> The webhook is kept but only listens for pings. Use presets or \"Choose events\" to re-enable notifications."
+	default:
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown action."})
+		return nil
+	}
+
+	hook.Events = newEvents
+	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
+	if encErr != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error repairing webhook URL.", ShowAlert: true})
+		return nil
+	}
+	hook.Config = &gh.HookConfig{
+		URL:         gh.String(fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)),
+		ContentType: gh.String("json"),
+		Secret:      gh.String(h.Config.GitHubWebhookSecret),
+	}
+	if _, _, editErr := client.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook); editErr != nil {
+		if h.handleAuthError(b, ctx, editErr) {
+			return nil
+		}
+		slog.Error("Failed to bulk-edit GitHub webhook", "repo", l.RepoFullName, "hook_id", l.WebhookID, "mode", mode, "chat", ctx.EffectiveChat.Id, "error", editErr)
+		text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
+		if isNotFoundErr(editErr) {
+			text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
+		return nil
+	}
+	slog.Info("Bulk event update applied", "repo", l.RepoFullName, "hook_id", l.WebhookID, "mode", mode, "chat", ctx.EffectiveChat.Id)
+
+	kb := ui.Markup(
+		ui.Row(ui.Callback("Choose events", cbRepo(cbIndividual, l, "1"),
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconChoose),
+		)),
+		ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))),
+	)
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        responseText,
@@ -503,6 +590,19 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		kb = append(kb, row)
 	}
 
+	// Bulk actions: one tap instead of toggling every event individually.
+	enabledCount := 0
+	for _, e := range github.SupportedEvents {
+		if enabledEvents[e.Name] {
+			enabledCount++
+		}
+	}
+	bulkRow := []gotgbot.InlineKeyboardButton{
+		ui.Callback("✅ Enable all", cbRepo(cbBulkEvents, l, "all"), ui.WithStyle(ui.StyleSuccess)),
+		ui.Callback("🔕 Mute all", cbRepo(cbBulkEvents, l, "mute"), ui.WithStyle(ui.StyleDanger)),
+	}
+	kb = append([][]gotgbot.InlineKeyboardButton{bulkRow}, kb...)
+
 	webhookSettingsURL := fmt.Sprintf("https://github.com/%s/%s/settings/hooks/%d", owner, repoName, l.WebhookID)
 	kb = append(kb, ui.Row(ui.URL("Edit more on GitHub", webhookSettingsURL,
 		ui.WithStyle(ui.StylePrimary),
@@ -511,7 +611,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 	kb = append(kb, ui.Row(ui.BackButton(cbRepo(cbRepoMenu, l))))
 
 	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
-		Text:        fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName),
+		Text:        fmt.Sprintf("Individual Events for <b>%s</b> (%d/%d enabled). Tap to toggle:", html.EscapeString(l.RepoFullName), enabledCount, len(github.SupportedEvents)),
 		ReplyMarkup: ui.Markup(kb...),
 	})
 	return err
@@ -653,7 +753,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 }
 
 func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.InlineKeyboardButton {
-	return [][]gotgbot.InlineKeyboardButton{
+	buttons := [][]gotgbot.InlineKeyboardButton{
 		ui.Row(ui.Callback("Push only", cbRepo(cbPresets, l, "push"),
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconPush),
@@ -662,6 +762,27 @@ func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.Inline
 			ui.WithStyle(ui.StyleSuccess),
 			ui.WithCustomEmojiEnv(ui.IconAll),
 		)),
+	}
+
+	// Presets, two per row.
+	var presetRow []gotgbot.InlineKeyboardButton
+	presetOrder := []string{"ci", "issues", "prs", "releases", "security"}
+	for _, name := range presetOrder {
+		preset, ok := github.EventPresets[name]
+		if !ok {
+			continue
+		}
+		presetRow = append(presetRow, ui.Callback(preset.Label, cbRepo(cbPresets, l, name)))
+		if len(presetRow) == 2 {
+			buttons = append(buttons, presetRow)
+			presetRow = []gotgbot.InlineKeyboardButton{}
+		}
+	}
+	if len(presetRow) > 0 {
+		buttons = append(buttons, presetRow)
+	}
+
+	buttons = append(buttons,
 		ui.Row(ui.Callback("Choose events", cbRepo(cbIndividual, l, "1"),
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconChoose),
@@ -670,7 +791,8 @@ func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.Inline
 			ui.WithStyle(ui.StyleDanger),
 			ui.WithCustomEmojiEnv(ui.IconStop),
 		)),
-	}
+	)
+	return buttons
 }
 
 func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error {

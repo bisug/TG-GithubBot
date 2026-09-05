@@ -86,3 +86,34 @@ var SupportedEvents = []Event{
 	{Name: "workflow_job", Label: "Workflow jobs", Short: "wj"},
 	{Name: "workflow_run", Label: "Workflow runs", Short: "wr"},
 }
+
+// EventPresets are named bundles of events offered as one-tap buttons in the
+// repo settings menu. Keys are used as callback data, so keep them short.
+var EventPresets = map[string]Preset{
+	"ci": {
+		Label:  "CI / builds",
+		Events: []string{"check_run", "check_suite", "workflow_run", "workflow_job", "deployment", "deployment_status", "status"},
+	},
+	"issues": {
+		Label:  "Issues",
+		Events: []string{"issues", "issue_comment", "issue_dependencies", "label", "milestone"},
+	},
+	"prs": {
+		Label:  "Pull requests",
+		Events: []string{"pull_request", "pull_request_review", "pull_request_review_comment", "pull_request_review_thread", "pull_request_target", "status"},
+	},
+	"releases": {
+		Label:  "Releases & deployments",
+		Events: []string{"release", "deployment", "deployment_status", "push"},
+	},
+	"security": {
+		Label:  "Security alerts",
+		Events: []string{"secret_scanning_alert", "secret_scanning_alert_location", "dependabot_alert", "security_advisory", "repository_advisory", "code_scanning_alert"},
+	},
+}
+
+// Preset is a named bundle of GitHub webhook events.
+type Preset struct {
+	Label  string
+	Events []string
+}
