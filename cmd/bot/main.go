@@ -335,6 +335,7 @@ func run() (runErr error) {
 				contextCache.Cleanup()
 				actionCache.Cleanup()
 				webhookServer.DeliverySeen.Cleanup()
+				webhookServer.Pacer.Cleanup()
 				clientFactory.Cleanup()
 				middleware.CleanupChatUpsertSeen()
 			}

@@ -17,6 +17,7 @@ import (
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
 	"github-webhook/internal/models"
+	"github-webhook/internal/ratelimit"
 	"github-webhook/internal/utils"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -38,6 +39,7 @@ type WebhookServer struct {
 	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
 	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
 	DeliverySeen *cache.Cache[string, struct{}]               // Key: X-GitHub-Delivery (idempotency)
+	Pacer        *ratelimit.Pacer                             // paces outbound sendMessage calls per chat
 	Wg           sync.WaitGroup
 }
 
@@ -49,6 +51,7 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 		ContextCache: ctxCache,
 		ActionCache:  actionCache,
 		DeliverySeen: cache.New[string, struct{}](),
+		Pacer:        ratelimit.NewPacer(),
 	}
 }
 
@@ -196,6 +199,39 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 		}
 	}
 
+	sentMsg, err := s.sendEventMessage(chatID, threadID, msg, markup, eventType, deliveryID, receivedAt)
+	if err != nil {
+		return
+	}
+
+	s.storeMessageContext(sentMsg.MessageId, chatID, event)
+	log.Printf("Webhook delivered chat=%d event=%s delivery=%s message_id=%d elapsed=%s", chatID, eventType, deliveryID, sentMsg.MessageId, time.Since(receivedAt).Round(time.Millisecond))
+}
+
+// requestTimeout is how long a single sendMessage HTTP call to Telegram may run.
+// The gotgbot default is 5s; we allow more headroom so genuine slow responses are
+// not mistaken for failures under load.
+const requestTimeout = 20 * time.Second
+
+// maxSendAttempts caps how many times we retry a send that Telegram rate-limits
+// (429) or that fails transiently. Chat-not-found and markdown parse errors are
+// handled separately and never hit this loop the same way.
+const maxSendAttempts = 3
+
+// sendEventMessage paces, sends, and retries a webhook notification, choosing
+// per-error-class behaviour:
+//   - HTTP 429 (Too Many Requests): keep the markdown text, sleep for Telegram's
+//     retry-after, then retry. We do NOT fall back to plain text here (that would
+//     only add a second request while we are already being throttled).
+//   - "chat not found" (400): the chat is unreachable/gone; give up to avoid
+//     hammering a dead target.
+//   - markdown parse error (400): fall back to plain text once.
+func (s *WebhookServer) sendEventMessage(chatID, threadID int64, msg string, markup gotgbot.ReplyMarkup, eventType, deliveryID string, receivedAt time.Time) (*gotgbot.Message, error) {
+	// Funnel every send through the per-chat pacer so bursts (a commit firing
+	// check_run + check_suite + workflow_run + workflow_job + ... together) drain
+	// at a safe rate instead of tripping Telegram's per-chat limit.
+	s.Pacer.Wait(chatID, threadID)
+
 	opts := &gotgbot.SendMessageOpts{
 		ParseMode: "MarkdownV2",
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
@@ -203,27 +239,108 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 		},
 		ReplyMarkup:     markup,
 		MessageThreadId: threadID,
+		RequestOpts:     &gotgbot.RequestOpts{Timeout: requestTimeout},
 	}
 
-	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)
+	sent, err := s.sendMessageWithRetry(chatID, msg, opts, eventType, deliveryID, receivedAt)
 	if err != nil {
-		log.Printf("Markdown send failed; retrying plain text chat=%d event=%s delivery=%s error=%v", chatID, eventType, deliveryID, err)
-		fallbackOpts := &gotgbot.SendMessageOpts{
-			LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
-				IsDisabled: true,
-			},
-			ReplyMarkup:     markup,
-			MessageThreadId: threadID,
-		}
-		sentMsg, err = s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
-		if err != nil {
-			log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
-			return
-		}
+		return nil, err
 	}
+	return sent, nil
+}
 
-	s.storeMessageContext(sentMsg.MessageId, chatID, event)
-	log.Printf("Webhook delivered chat=%d event=%s delivery=%s message_id=%d elapsed=%s", chatID, eventType, deliveryID, sentMsg.MessageId, time.Since(receivedAt).Round(time.Millisecond))
+// sendMessageWithRetry sends msg with the given opts, handling 429 (sleep +
+// retry), transient failures (brief retry), chat-not-found (give up), and
+// markdown parse errors (fall back to plain text once).
+func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *gotgbot.SendMessageOpts, eventType, deliveryID string, receivedAt time.Time) (*gotgbot.Message, error) {
+	var lastErr error
+	for attempt := 1; attempt <= maxSendAttempts; attempt++ {
+		sent, err := s.Bot.SendMessage(chatID, msg, opts)
+		if err == nil {
+			return sent, nil
+		}
+		lastErr = err
+
+		if retryAfter, ok := isTooManyRequests(err); ok {
+			if attempt < maxSendAttempts {
+				log.Printf("Telegram rate limited; sleeping %s chat=%d event=%s delivery=%s attempt=%d", retryAfter.Round(time.Second), chatID, eventType, deliveryID, attempt)
+				time.Sleep(retryAfter)
+				continue
+			}
+			log.Printf("Error sending message (rate limited, gave up) chat=%d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
+			return nil, err
+		}
+
+		if isChatNotFound(err) {
+			// Permanent: the chat no longer exists or the bot cannot reach it. Log
+			// clearly so the operator removes the stale GitHub webhook.
+			log.Printf("Skipping unreachable chat %d event=%s delivery=%s: chat not found (remove the webhook for this chat)", chatID, eventType, deliveryID)
+			return nil, err
+		}
+
+		if isMarkdownParseError(err) {
+			log.Printf("Markdown send failed; retrying plain text chat=%d event=%s delivery=%s error=%v", chatID, eventType, deliveryID, err)
+			fallbackOpts := &gotgbot.SendMessageOpts{
+				LinkPreviewOptions: opts.LinkPreviewOptions,
+				ReplyMarkup:        opts.ReplyMarkup,
+				MessageThreadId:    opts.MessageThreadId,
+				RequestOpts:        opts.RequestOpts,
+			}
+			sent, fallbackErr := s.Bot.SendMessage(chatID, plainTextForTelegram(msg), fallbackOpts)
+			if fallbackErr != nil {
+				log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), fallbackErr)
+				return nil, fallbackErr
+			}
+			return sent, nil
+		}
+
+		// Generic/transient error (network, 5xx, ...): retry briefly with backoff.
+		if attempt < maxSendAttempts {
+			backoff := time.Duration(attempt) * time.Second
+			log.Printf("Transient send error; retrying in %s chat=%d event=%s delivery=%s attempt=%d error=%v", backoff, chatID, eventType, deliveryID, attempt, err)
+			time.Sleep(backoff)
+			continue
+		}
+		log.Printf("Error sending message to chat %d event=%s delivery=%s elapsed=%s: %v", chatID, eventType, deliveryID, time.Since(receivedAt).Round(time.Millisecond), err)
+		return nil, err
+	}
+	return nil, lastErr
+}
+
+// isTooManyRequests reports whether err is a Telegram HTTP 429 and returns the
+// retry-after duration (defaulting to 2s if Telegram did not send one).
+func isTooManyRequests(err error) (time.Duration, bool) {
+	var te *gotgbot.TelegramError
+	if !errors.As(err, &te) || te.Code != http.StatusTooManyRequests {
+		return 0, false
+	}
+	if te.ResponseParams != nil && te.ResponseParams.RetryAfter > 0 {
+		return time.Duration(te.ResponseParams.RetryAfter) * time.Second, true
+	}
+	return 2 * time.Second, true
+}
+
+// isChatNotFound reports whether err is Telegram's "Bad Request: chat not found".
+func isChatNotFound(err error) bool {
+	var te *gotgbot.TelegramError
+	return errors.As(err, &te) && te.Code == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(te.Description), "chat not found")
+}
+
+// isMarkdownParseError reports whether err is a Telegram 400 caused by markdown
+// syntax that Telegram could not parse. Only these errors should fall back to
+// plain text.
+func isMarkdownParseError(err error) bool {
+	var te *gotgbot.TelegramError
+	if !errors.As(err, &te) || te.Code != http.StatusBadRequest {
+		return false
+	}
+	d := strings.ToLower(te.Description)
+	return strings.Contains(d, "can't parse") ||
+		strings.Contains(d, "parse entities") ||
+		strings.Contains(d, "entities") ||
+		strings.Contains(d, "button") ||
+		strings.Contains(d, "markup")
 }
 
 // normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
