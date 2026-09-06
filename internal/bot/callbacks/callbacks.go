@@ -614,7 +614,7 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 	opts := &gh.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
-		ListOptions: gh.ListOptions{PerPage: 5, Page: page},
+		ListOptions: gh.ListOptions{PerPage: 10, Page: page},
 	}
 
 	repos, resp, err := client.Repositories.List(context.Background(), "", opts)
