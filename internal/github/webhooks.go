@@ -27,6 +27,10 @@ import (
 const (
 	maxWebhookPayloadBytes = 25 * 1024 * 1024
 	webhookDBTimeout       = 5 * time.Second
+	// maxConcurrentDeliveries bounds in-flight webhook processing goroutines so a
+	// GitHub redelivery storm cannot park unbounded goroutines (each blocked in
+	// the Pacer) and exhaust memory.
+	maxConcurrentDeliveries = 64
 )
 
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
@@ -41,6 +45,7 @@ type WebhookServer struct {
 	DeliverySeen *cache.Cache[string, struct{}]               // Key: X-GitHub-Delivery (idempotency)
 	Pacer        *ratelimit.Pacer                             // paces outbound sendMessage calls per chat
 	Wg           sync.WaitGroup
+	sem          chan struct{} // bounds concurrent webhook processing goroutines
 }
 
 func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
@@ -52,6 +57,7 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 		ActionCache:  actionCache,
 		DeliverySeen: cache.New[string, struct{}](),
 		Pacer:        ratelimit.NewPacer(),
+		sem:          make(chan struct{}, maxConcurrentDeliveries),
 	}
 }
 
@@ -147,6 +153,10 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	s.Wg.Add(1)
 	go func() {
 		defer s.Wg.Done()
+		// Bound concurrent deliveries; a full semaphore parks this goroutine here
+		// (cheap) instead of letting thousands pile up inside the Pacer.
+		s.sem <- struct{}{}
+		defer func() { <-s.sem }()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				slog.Error("Webhook processing panic", "event", eventType, "delivery", deliveryID, "hook_id", hookID, "chat", chatID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "panic", recovered)
@@ -196,6 +206,19 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 		cancel()
 		if err == nil && link != nil {
 			threadID = link.MessageThreadID
+		}
+	}
+
+	// The webhook URL only encodes the chat, not the repository. If the repo was
+	// unlinked but the GitHub-side webhook deletion failed (403/404), events would
+	// keep flowing with no bot-side off switch — so verify the link before sending.
+	if repoFullName := eventRepoFullName(event); repoFullName != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
+		_, err := s.DB.GetRepoLink(ctx, chatID, repoFullName)
+		cancel()
+		if err != nil {
+			slog.Info("Webhook skipped: repository not linked to this chat", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID)
+			return
 		}
 	}
 
@@ -278,6 +301,13 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 			return nil, err
 		}
 
+		if isChatBlocked(err) {
+			// Permanent: the bot was blocked or removed. Retrying only hammers a
+			// dead target on every subsequent event.
+			slog.Warn("Skipping chat: bot blocked or removed from the chat (remove the webhook for this chat)", "chat", chatID, "event", eventType, "delivery", deliveryID)
+			return nil, err
+		}
+
 		if isMarkdownParseError(err) {
 			slog.Warn("HTML send failed; retrying plain text", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
 			fallbackOpts := &gotgbot.SendMessageOpts{
@@ -325,6 +355,20 @@ func isChatNotFound(err error) bool {
 	var te *gotgbot.TelegramError
 	return errors.As(err, &te) && te.Code == http.StatusBadRequest &&
 		strings.Contains(strings.ToLower(te.Description), "chat not found")
+}
+
+// isChatBlocked reports whether err is a permanent Telegram 403 meaning the bot
+// was blocked by the user or kicked from the chat. Retrying these is pointless.
+func isChatBlocked(err error) bool {
+	var te *gotgbot.TelegramError
+	if !errors.As(err, &te) || te.Code != http.StatusForbidden {
+		return false
+	}
+	d := strings.ToLower(te.Description)
+	return strings.Contains(d, "blocked") ||
+		strings.Contains(d, "kicked") ||
+		strings.Contains(d, "not a member") ||
+		strings.Contains(d, "deactivated")
 }
 
 // isMarkdownParseError reports whether err is a Telegram 400 caused by markdown
@@ -385,6 +429,28 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	}
 
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
+}
+
+// eventRepoFullName extracts the "owner/repo" full name from any event payload
+// that carries a repository. Empty string when the event has no repo.
+func eventRepoFullName(event interface{}) string {
+	type repoCarrier interface {
+		GetRepo() *github.Repository
+	}
+	if e, ok := event.(repoCarrier); ok {
+		if r := e.GetRepo(); r != nil {
+			return r.GetFullName()
+		}
+	}
+	if e, ok := event.(*github.PushEvent); ok {
+		return e.GetRepo().GetFullName()
+	}
+	if e, ok := event.(*GenericWebhookEvent); ok {
+		if r := e.Repository; r != nil {
+			return firstNonEmpty(r.FullName, r.Name)
+		}
+	}
+	return ""
 }
 
 // prActionTarget returns the owner, repo and PR number for events that support

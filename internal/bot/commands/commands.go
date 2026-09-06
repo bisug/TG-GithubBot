@@ -227,6 +227,12 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
+		// The GitHub webhook already exists; if we fail to persist the link it
+		// becomes an orphan the user cannot remove via the bot. Best-effort
+		// delete so the repo is left clean.
+		if _, delErr := client.Repositories.DeleteHook(context.Background(), owner, repo, webhookID); delErr != nil {
+			slog.Error("Failed to clean up orphaned webhook after DB error", "repo", repoFullName, "hook_id", webhookID, "error", delErr)
+		}
 		_, err := ctx.EffectiveMessage.Reply(b, "❌ <b>Error linking repository.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return err
 	}
@@ -262,7 +268,7 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	opts := &github.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
-		ListOptions: github.ListOptions{PerPage: 5, Page: page},
+		ListOptions: github.ListOptions{PerPage: 10, Page: page},
 	}
 
 	repos, resp, err := client.Repositories.List(context.Background(), "", opts)
@@ -414,7 +420,7 @@ func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
 /settings - Configure event notifications
 
 <b>Need more help?</b>
-Visit the <a href="https://github.com/AshokShau/GithubBot">GitHub page</a> for more details.`
+Visit the <a href="https://github.com/bisug/TG-GithubBot">GitHub repository</a> for more details.`
 
 	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
 	return err
@@ -443,7 +449,7 @@ We value your privacy and are committed to protecting your data. This policy out
 • <b>Removal:</b> You can remove repositories using /removerepo. To request full data deletion, please contact the developer or simply block the bot.
 
 <b>5. Contact</b>
-If you have questions or concerns, please visit our <a href="https://github.com/AshokShau/GithubBot">GitHub repository</a> or join our <a href="https://t.me/GuardxSupport">Telegram Support Group</a>.`
+If you have questions or concerns, please visit our <a href="https://github.com/bisug/TG-GithubBot">GitHub repository</a> or open an issue there.`
 
 	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
 	return err
@@ -462,7 +468,19 @@ func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 func (h *CommandHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
 	var errResp *github.ErrorResponse
 	if errors.As(err, &errResp) {
-		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
+		// 401 always means the token is dead. 403 is ambiguous: it can be a
+		// revoked token, but also a legitimate permission denial (e.g. approving
+		// your own PR) or an abuse/rate limit — clearing the token on those would
+		// force a pointless re-auth. Only clear on 401, or a 403 that explicitly
+		// mentions bad credentials.
+		if errResp.Response.StatusCode == http.StatusUnauthorized {
+			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
+			_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			return true
+		}
+		if errResp.Response.StatusCode == http.StatusForbidden &&
+			strings.Contains(strings.ToLower(errResp.Message), "bad credentials") {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
 			_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -494,11 +512,11 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	mContext, found := h.ContextCache.Get(key)
 	if !found {
-		_, err := msg.Reply(b, "Context not found. The message might be too old.", nil)
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours, or the bot restarted).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
 		return err
 	}
 
-	if mContext.Type != "pr" && mContext.Type != "pr_review" {
+	if mContext.Type != "pr" && mContext.Type != "pr_review" && mContext.Type != "pr_review_comment" {
 		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
 		return err
 	}
@@ -539,7 +557,7 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	mContext, found := h.ContextCache.Get(key)
 	if !found {
-		_, err := msg.Reply(b, "Context not found. The message might be too old.", nil)
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours, or the bot restarted).\nUse the buttons on the notification, or open the item on GitHub to act on it.", nil)
 		return err
 	}
 

@@ -154,6 +154,23 @@ func run() (runErr error) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 
+		// GitHub redirects back with ?error=access_denied when the user cancels
+		// the authorization screen. Show a friendly page instead of a raw 400.
+		if oauthErr := r.URL.Query().Get("error"); oauthErr != "" {
+			slog.Info("OAuth authorization denied", "error", oauthErr)
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`
+			<html>
+			<head><title>Cancelled</title></head>
+			<body style="font-family: sans-serif; text-align: center; padding: 50px;">
+				<h1>Connection cancelled</h1>
+				<p>You declined to connect your GitHub account. Nothing was saved.</p>
+				<p><a href="https://t.me/` + b.User.Username + `">Return to Telegram</a> and run /connect again if you change your mind.</p>
+			</body>
+			</html>`))
+			return
+		}
+
 		if code == "" {
 			http.Error(w, "Missing code", http.StatusBadRequest)
 			return
@@ -298,8 +315,10 @@ func run() (runErr error) {
 		slog.Info("Registered local Telegram webhook handler for /bot<redacted>")
 
 		err = updater.SetAllBotWebhooks(webhookBase, &gotgbot.SetWebhookOpts{
-			MaxConnections:     100,
-			DropPendingUpdates: true,
+			MaxConnections: 100,
+			// Keep updates that arrive while the bot is down (e.g. during a
+			// deploy) so commands are not silently lost.
+			DropPendingUpdates: false,
 		})
 		if err != nil {
 			slog.Error("Failed to set Telegram webhook; falling back to polling", "error", err)
@@ -344,6 +363,7 @@ func run() (runErr error) {
 				webhookServer.Pacer.Cleanup()
 				clientFactory.Cleanup()
 				middleware.CleanupChatUpsertSeen()
+				utils.CleanupAdminCache()
 			}
 		}
 	}()
@@ -355,7 +375,7 @@ func run() (runErr error) {
 		if err != nil {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			shutdownErr := shutdown(shutdownCtx, server, updater, database, webhookServer)
+			shutdownErr := shutdown(shutdownCtx, server, updater, database, webhookServer, b)
 			databaseClosed = true
 			if shutdownErr != nil {
 				return errors.Join(fmt.Errorf("server failed: %w", err), fmt.Errorf("shutdown after server failure: %w", shutdownErr))
@@ -368,7 +388,7 @@ func run() (runErr error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	err = shutdown(shutdownCtx, server, updater, database, webhookServer)
+	err = shutdown(shutdownCtx, server, updater, database, webhookServer, b)
 	databaseClosed = true
 	if err != nil {
 		return fmt.Errorf("shutdown: %w", err)
@@ -378,7 +398,7 @@ func run() (runErr error) {
 	return nil
 }
 
-func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, database *db.DB, webhookServer *github.WebhookServer) error {
+func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, database *db.DB, webhookServer *github.WebhookServer, bot *gotgbot.Bot) error {
 	var errs []error
 
 	if err := updater.Stop(); err != nil {
@@ -387,6 +407,12 @@ func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, da
 
 	if err := server.Shutdown(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("shutdown server: %w", err))
+	}
+
+	// Ask Telegram to close the bot's session so pending HTTP requests are
+	// released promptly instead of lingering until timeout.
+	if _, err := bot.Close(nil); err != nil {
+		slog.Debug("Bot.Close failed", "error", err)
 	}
 
 	webhookWaitCh := make(chan struct{})

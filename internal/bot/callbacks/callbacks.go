@@ -461,6 +461,10 @@ func (h *CallbackHandler) handleBulkEvents(b *gotgbot.Bot, ctx *ext.Context, l *
 	slog.Info("Bulk event update applied", "repo", l.RepoFullName, "hook_id", l.WebhookID, "mode", mode, "chat", ctx.EffectiveChat.Id)
 
 	kb := ui.Markup(
+		ui.Row(ui.Callback("🔔 Unmute (all events)", cbRepo(cbBulkEvents, l, "all"),
+			ui.WithStyle(ui.StyleSuccess),
+			ui.WithCustomEmojiEnv(ui.IconAll),
+		)),
 		ui.Row(ui.Callback("Choose events", cbRepo(cbIndividual, l, "1"),
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconChoose),
@@ -693,6 +697,12 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 
 	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
+		// The GitHub webhook already exists; if we fail to persist the link it
+		// becomes an orphan the user cannot remove via the bot. Best-effort
+		// delete so the repo is left clean.
+		if _, delErr := client.Repositories.DeleteHook(context.Background(), repo.GetOwner().GetLogin(), repo.GetName(), webhookID); delErr != nil {
+			slog.Error("Failed to clean up orphaned webhook after DB error", "repo", repo.GetFullName(), "hook_id", webhookID, "error", delErr)
+		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error linking repository."})
 		return nil
 	}
@@ -828,7 +838,16 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
 	var errResp *gh.ErrorResponse
 	if errors.As(err, &errResp) {
-		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
+		// 401 always means the token is dead. 403 is ambiguous (revoked token,
+		// permission denial, rate limit) — only clear the token when GitHub
+		// explicitly says the credentials are bad.
+		if errResp.Response.StatusCode == http.StatusUnauthorized {
+			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
+			return true
+		}
+		if errResp.Response.StatusCode == http.StatusForbidden &&
+			strings.Contains(strings.ToLower(errResp.Message), "bad credentials") {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
 			return true

@@ -72,8 +72,17 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if err != nil {
 		slog.Error("Failed to post comment", "owner", mContext.Owner, "repo", mContext.Repo, "issue", mContext.IssueNumber, "error", err)
+		_, _ = msg.Reply(b, "❌ <b>Failed to post your comment on GitHub.</b>\nPlease try again, or add it directly on GitHub.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
+	// Confirm with a 👍 reaction on the user's message; fall back to a text
+	// confirmation if reactions are unavailable (e.g. some channel configs).
+	if _, err := b.SetMessageReaction(ctx.EffectiveChat.Id, msg.MessageId, &gotgbot.SetMessageReactionOpts{
+		Reaction: []gotgbot.ReactionType{gotgbot.ReactionTypeEmoji{Emoji: "👍"}},
+	}); err != nil {
+		slog.Debug("Could not set comment confirmation reaction", "chat", ctx.EffectiveChat.Id, "error", err)
+		_, _ = msg.Reply(b, "💬 Comment posted on GitHub.", nil)
+	}
 	return nil
 }

@@ -186,8 +186,8 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 
 		msg += fmt.Sprintf(
 			"- <a href=\"%s\">%s</a>: %s by %s\n",
-			EscapeHTML(shortSHA),
 			EscapeHTMLURL(commitURL),
+			EscapeHTML(shortSHA),
 			commitMessage,
 			authorStr,
 		)

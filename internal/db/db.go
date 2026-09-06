@@ -27,6 +27,11 @@ type DB struct {
 	ChatReposCache *cache.Cache[int64, []models.RepoLink]
 }
 
+// ErrLinkNotFound is returned by GetRepoLink/GetRepoLinkByWebhookID when the
+// chat exists but the repository is not linked. Callers use errors.Is to
+// distinguish "not linked" from a real database failure.
+var ErrLinkNotFound = errors.New("link not found")
+
 func Connect(cfg *config.Config) (*DB, error) {
 	clientOpts := options.Client().ApplyURI(cfg.MongoDBURI)
 	client, err := mongo.Connect(clientOpts)
@@ -232,7 +237,7 @@ func (d *DB) GetRepoLink(ctx context.Context, chatID int64, repoFullName string)
 		}
 	}
 
-	return nil, errors.New("link not found")
+	return nil, ErrLinkNotFound
 }
 
 // GetRepoLinkByWebhookID returns a specific repository link by webhook ID
@@ -248,7 +253,7 @@ func (d *DB) GetRepoLinkByWebhookID(ctx context.Context, chatID int64, webhookID
 		}
 	}
 
-	return nil, errors.New("link not found")
+	return nil, ErrLinkNotFound
 }
 
 // UpdateRepoLinkName updates the repository name for a given webhook ID in a chat

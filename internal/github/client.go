@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,10 @@ import (
 // keyed by access token and users re-authenticate over time, so without a TTL it would
 // grow without bound for a long-running process.
 const clientIdleTTL = 30 * time.Minute
+
+// ghHTTPTimeout bounds every GitHub API call made through cached clients. Without
+// it a hung connection parks the calling handler goroutine forever.
+const ghHTTPTimeout = 30 * time.Second
 
 type cachedClient struct {
 	client   *github.Client
@@ -36,12 +41,12 @@ func (f *ClientFactory) GetUserClient(_ context.Context, accessToken string) *gi
 		return cc.client
 	}
 
-	c, err := github.NewClient(github.WithAuthToken(accessToken))
+	c, err := github.NewClient(github.WithAuthToken(accessToken), github.WithHTTPClient(&http.Client{Timeout: ghHTTPTimeout}))
 	if err != nil {
 		// WithAuthToken only fails on an empty token, which callers never pass.
 		// ponytail: cache a best-effort client rather than complicating the
 		// factory signature; upgrade path is returning an error from GetUserClient.
-		c, _ = github.NewClient()
+		c, _ = github.NewClient(github.WithHTTPClient(&http.Client{Timeout: ghHTTPTimeout}))
 	}
 	cc := &cachedClient{client: c}
 	cc.lastUsed.Store(time.Now().UnixNano())

@@ -23,8 +23,9 @@ services:
     image: mongo:8.3
     container_name: tg_githubbot_mongo
     restart: unless-stopped
-    ports:
-      - "27017:27017"
+    # No ports mapping: Mongo stays on the compose network only. Exposing it
+    # unauthenticated on all interfaces is a data-leak risk. If you need host
+    # access for debugging, use "127.0.0.1:27017:27017" instead.
     volumes:
       - mongodb_data:/data/db
 

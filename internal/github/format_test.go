@@ -59,6 +59,28 @@ func TestFormatPushEventCapsCommitListAndUsesFirstLine(t *testing.T) {
 	}
 }
 
+func TestFormatPushEventCommitLinkHrefAndText(t *testing.T) {
+	// Regression: href and visible text were swapped, producing
+	// <a href="0123456">https://github.com/.../commit/...</a>.
+	msg, _ := FormatPushEvent(&gh.PushEvent{
+		Ref: gh.Ptr("refs/heads/main"),
+		Repo: &gh.PushEventRepository{
+			FullName: gh.Ptr("owner/repo"),
+			HTMLURL:  gh.Ptr("https://github.com/owner/repo"),
+		},
+		Commits: []*gh.HeadCommit{{
+			ID:      gh.Ptr("0123456789abcdef"),
+			Message: gh.Ptr("fix: thing"),
+			Author:  &gh.CommitAuthor{Name: gh.Ptr("octocat")},
+		}},
+	})
+
+	want := `<a href="https://github.com/owner/repo/commit/0123456789abcdef">0123456</a>`
+	if !strings.Contains(msg, want) {
+		t.Fatalf("FormatPushEvent commit link = %q, want %q", msg, want)
+	}
+}
+
 func TestStripTelegramHTMLRemovesTagsAndDecodesEntities(t *testing.T) {
 	got := StripTelegramHTML("<b>Title</b> &amp; <a href=\"https://github.com/owner/repo\">repo</a>")
 
