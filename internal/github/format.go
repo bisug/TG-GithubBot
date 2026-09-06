@@ -96,7 +96,7 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 	case "reopened":
 		msg += "🔄 Reopened\n"
 	case "edited":
-		msg += fmt.Sprintf("✏️ Edited\n*Description:*\n%s\n", FormatTextWithMarkdown(pr.GetBody()))
+		msg += fmt.Sprintf("✏️ Edited\n<b>Description:</b>\n%s\n", FormatTextWithMarkdown(pr.GetBody()))
 	case "assigned":
 		var assignees []string
 		for _, a := range pr.Assignees {
@@ -144,9 +144,9 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 
 	commitCount := len(commits)
 	commitPlural := pluralSuffix(commitCount)
-	title := fmt.Sprintf("🔨 <b>%d new commit%s to</b> `%s:%s`\n\n", commitCount, commitPlural, EscapeHTML(repo), EscapeHTML(refName))
+	title := fmt.Sprintf("🔨 <b>%d new commit%s to</b> <code>%s:%s</code>\n\n", commitCount, commitPlural, EscapeHTML(repo), EscapeHTML(refName))
 	if commitCount == 0 {
-		title = fmt.Sprintf("🔨 <b>Push to</b> `%s:%s`\n\n", EscapeHTML(repo), EscapeHTML(refName))
+		title = fmt.Sprintf("🔨 <b>Push to</b> <code>%s:%s</code>\n\n", EscapeHTML(repo), EscapeHTML(refName))
 	}
 	msg := title
 
@@ -199,7 +199,7 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 
 	if len(msg) > 4000 {
 		msg = fmt.Sprintf(
-			"🔨 <b>%d new commit(s) to</b> `%s:%s`\n\n"+
+			"🔨 <b>%d new commit(s) to</b> <code>%s:%s</code>\n\n"+
 				"⚠️ <i>Too many commits to display, check the repository for details.</i>\n",
 			commitCount, EscapeHTML(repo), EscapeHTML(refName),
 		)
@@ -298,7 +298,7 @@ func FormatCreateEvent(event *github.CreateEvent) (string, *gotgbot.InlineKeyboa
 
 	msg := fmt.Sprintf(
 		"✨ <b>New %s created</b>\n\n"+
-			"<b>Name:</b> `%s`\n"+
+			"<b>Name:</b> <code>%s</code>\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(refType),
@@ -334,7 +334,7 @@ func FormatDeleteEvent(event *github.DeleteEvent) (string, *gotgbot.InlineKeyboa
 	}
 
 	msg := fmt.Sprintf(
-		"%s <b>Deleted %s:</b> `%s`\n\n"+
+		"%s <b>Deleted %s:</b> <code>%s</code>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s",
 		emoji,
@@ -376,7 +376,7 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 	msg := fmt.Sprintf(
 		"%s <b>%s %s comment on commit</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Commit:</b> <a href=\"%s\">`%s`</a>\n",
+			"<b>Commit:</b> <a href=\"%s\"><code>%s</code></a>\n",
 		actionEmoji,
 		FormatUser(sender),
 		EscapeHTML(action),
@@ -467,11 +467,11 @@ func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboa
 		// Only permission/role changes exist on this event; render them explicitly
 		// instead of dumping the raw struct (which breaks MarkdownV2).
 		if p := event.Changes.Permission; p != nil {
-			msg += fmt.Sprintf("\n*Permission:* %s → %s",
+			msg += fmt.Sprintf("\n<b>Permission:</b> %s → %s",
 				EscapeHTML(p.GetFrom()), EscapeHTML(p.GetTo()))
 		}
 		if r := event.Changes.RoleName; r != nil {
-			msg += fmt.Sprintf("\n*Role:* %s → %s",
+			msg += fmt.Sprintf("\n<b>Role:</b> %s → %s",
 				EscapeHTML(r.GetFrom()), EscapeHTML(r.GetTo()))
 		}
 	}
@@ -548,7 +548,7 @@ func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotgbot.InlineKeyb
 	)
 
 	if (action == "created" || action == "edited") && release.GetBody() != "" {
-		msg += fmt.Sprintf("\n*Notes:*\n%s", FormatReleaseBody(release.GetBody()))
+		msg += fmt.Sprintf("\n<b>Notes:</b>\n%s", FormatReleaseBody(release.GetBody()))
 	}
 
 	return FormatMessageWithButton(msg, "View Release", release.GetHTMLURL())
@@ -589,7 +589,7 @@ func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboa
 	}, state, "⚠️")
 
 	msg := fmt.Sprintf(
-		"%s <b>%s for commit</b> <a href=\"%s\">`%s`</a>\n\n"+
+		"%s <b>%s for commit</b> <a href=\"%s\"><code>%s</code></a>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>Status:</b> %s\n"+
 			"<b>By:</b> %s",
@@ -647,8 +647,8 @@ func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.Inline
 
 	msg := fmt.Sprintf(
 		"%s <b>Workflow Run %s in</b> %s\n\n"+
-			"<b>Workflow:</b> `%s`\n"+
-			"<b>Status:</b> `%s`\n"+
+			"<b>Workflow:</b> <code>%s</code>\n"+
+			"<b>Status:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s",
 		statusEmoji,
 		EscapeHTML(titleText(conclusion)),
@@ -660,7 +660,7 @@ func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.Inline
 	if conclusion == "" {
 		msg = fmt.Sprintf(
 			"%s <b>Workflow Run %s in</b> %s\n\n"+
-				"<b>Workflow:</b> `%s`\n"+
+				"<b>Workflow:</b> <code>%s</code>\n"+
 				"<b>By:</b> %s",
 			statusEmoji,
 			EscapeHTML(statusLabel),
@@ -853,7 +853,7 @@ func FormatRepositoryDispatchEvent(e *github.RepositoryDispatchEvent) (string, *
 		if err := json.Unmarshal(e.ClientPayload, &payload); err == nil {
 			if len(payload) > 0 {
 				payloadBytes, _ := json.Marshal(payload)
-				payloadStr = fmt.Sprintf("\n*Payload:* `%s`", EscapeHTML(string(payloadBytes)))
+				payloadStr = fmt.Sprintf("\n<b>Payload:</b> <code>%s</code>", EscapeHTML(string(payloadBytes)))
 			}
 		}
 	}
@@ -977,7 +977,7 @@ func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotgbot.Inline
 		FormatUser(sender.GetLogin()),
 	)
 	if sponsorship != nil && sponsorship.Tier != nil {
-		msg += fmt.Sprintf("<b>Tier:</b> `%s` -> `%s`\n", sponsorship.Tier.GetFrom(), "new_tier")
+		msg += fmt.Sprintf("<b>Tier:</b> <code>%s</code> -> <code>%s</code>\n", EscapeHTML(sponsorship.Tier.GetFrom()), "new_tier")
 	}
 
 	return FormatMessageWithButton(msg, "View Sponsorship", sender.GetHTMLURL())
@@ -1023,7 +1023,7 @@ func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *go
 	msg := fmt.Sprintf(
 		"📜 <b>Repository Ruleset %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Ruleset:</b> `%s`\n"+
+			"<b>Ruleset:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1043,7 +1043,7 @@ func FormatSecretScanningAlertEvent(e *github.SecretScanningAlertEvent) (string,
 	msg := fmt.Sprintf(
 		"🤫 <b>Secret Scanning Alert %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Secret Type:</b> `%s`\n"+
+			"<b>Secret Type:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1084,7 +1084,7 @@ func FormatSecurityAndAnalysisEvent(e *github.SecurityAndAnalysisEvent) (string,
 	msg := fmt.Sprintf(
 		"🔒 <b>Security & Analysis Settings Updated</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>From Status:</b> `%s`\n"+
+			"<b>From Status:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(fromStatus),
@@ -1148,7 +1148,7 @@ func FormatRegistryPackageEvent(e *github.RegistryPackageEvent) (string, *gotgbo
 	msg := fmt.Sprintf(
 		"📦 <b>Registry Package %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Package:</b> `%s`\n"+
+			"<b>Package:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1376,7 +1376,7 @@ func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotgbo
 	msg := fmt.Sprintf(
 		"🤖 <b>Dependabot Alert %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Package:</b> `%s`\n"+
+			"<b>Package:</b> <code>%s</code>\n"+
 			"<b>Severity:</b> %s\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
@@ -1397,7 +1397,7 @@ func FormatDeploymentProtectionRuleEvent(e *github.DeploymentProtectionRuleEvent
 	msg := fmt.Sprintf(
 		"🛡️ <b>Deployment Protection Rule %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Environment:</b> `%s`\n"+
+			"<b>Environment:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1416,7 +1416,7 @@ func FormatDeploymentReviewEvent(e *github.DeploymentReviewEvent) (string, *gotg
 	msg := fmt.Sprintf(
 		"🔎 <b>Deployment Review %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Environment:</b> `%s`\n"+
+			"<b>Environment:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1439,7 +1439,7 @@ func FormatContentReferenceEvent(e *github.ContentReferenceEvent) (string, *gotg
 	msg := fmt.Sprintf(
 		"🔗 <b>Content Reference %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Reference:</b> `%s`\n"+
+			"<b>Reference:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		FormatRepo(repo.GetFullName()),
@@ -1459,7 +1459,7 @@ func FormatCustomPropertyEvent(e *github.CustomPropertyEvent) (string, *gotgbot.
 	msg := fmt.Sprintf(
 		"📝 <b>Custom Property %s</b>\n\n"+
 			"<b>Organization:</b> %s\n"+
-			"<b>Property Name:</b> `%s`\n"+
+			"<b>Property Name:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(action),
 		EscapeHTML(org.GetLogin()),
@@ -1477,8 +1477,8 @@ func FormatCustomPropertyValuesEvent(e *github.CustomPropertyValuesEvent) (strin
 	var props []string
 	for _, p := range e.NewPropertyValues {
 		// p.Value is `any`; render via fmt and escape so arbitrary values cannot
-		// break MarkdownV2 parsing.
-		props = append(props, fmt.Sprintf("`%s`: `%s`", EscapeHTML(p.PropertyName), EscapeHTML(fmt.Sprintf("%v", p.Value))))
+		// break HTML parsing.
+		props = append(props, fmt.Sprintf("<code>%s</code>: <code>%s</code>", EscapeHTML(p.PropertyName), EscapeHTML(fmt.Sprintf("%v", p.Value))))
 	}
 
 	msg := fmt.Sprintf(
@@ -1612,10 +1612,10 @@ func FormatOrganizationEvent(e *github.OrganizationEvent) (string, *gotgbot.Inli
 	action := e.GetAction()
 	sender := e.GetSender()
 
-	msg := fmt.Sprintf("🏢 <b>Organization Event</b>\n*Action:* %s", EscapeHTML(action))
+	msg := fmt.Sprintf("🏢 <b>Organization Event</b>\n<b>Action:</b> %s", EscapeHTML(action))
 
 	if sender != nil {
-		msg += fmt.Sprintf("\n*By:* %s", FormatUser(sender.GetLogin()))
+		msg += fmt.Sprintf("\n<b>By:</b> %s", FormatUser(sender.GetLogin()))
 	}
 
 	return FormatMessageWithButton(msg, "View Organization", e.GetOrganization().GetHTMLURL())
@@ -1726,7 +1726,7 @@ func FormatLabelEvent(e *github.LabelEvent) (string, *gotgbot.InlineKeyboardMark
 
 	if label := e.GetLabel(); label != nil {
 		msg += fmt.Sprintf("<b>Name:</b> %s\n", EscapeHTML(label.GetName()))
-		msg += fmt.Sprintf("<b>Color:</b> `#%s`\n", EscapeHTML(label.GetColor()))
+		msg += fmt.Sprintf("<b>Color:</b> <code>#%s</code>\n", EscapeHTML(label.GetColor()))
 		if desc := label.GetDescription(); desc != "" {
 			msg += fmt.Sprintf("<b>Description:</b> %s\n", FormatTextWithMarkdown(desc))
 		}
@@ -1796,7 +1796,7 @@ func FormatGollumEvent(e *github.GollumEvent) (string, *gotgbot.InlineKeyboardMa
 	}
 
 	if len(e.Pages) > 0 {
-		msg.WriteString("\n*Page Changes:*\n")
+		msg.WriteString("\n<b>Page Changes:</b>\n")
 		for _, page := range e.Pages {
 			if page == nil {
 				continue
@@ -1893,7 +1893,7 @@ func FormatCheckSuiteEvent(e *github.CheckSuiteEvent) (string, *gotgbot.InlineKe
 		}
 	}
 
-	msg.WriteString(fmt.Sprintf("\n*Repository:* %s\n", FormatRepo(e.GetRepo().GetFullName())))
+	msg.WriteString(fmt.Sprintf("\n<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName())))
 
 	if sender := e.GetSender(); sender != nil {
 		username := sender.GetLogin()
@@ -1933,7 +1933,7 @@ func FormatCheckRunEvent(e *github.CheckRunEvent) (string, *gotgbot.InlineKeyboa
 		}
 	}
 
-	msg.WriteString(fmt.Sprintf("\n*Repository:* %s\n", FormatRepo(e.GetRepo().GetFullName())))
+	msg.WriteString(fmt.Sprintf("\n<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName())))
 
 	if sender := e.GetSender(); sender != nil {
 		username := sender.GetLogin()
@@ -2018,7 +2018,7 @@ func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotgbot.Inli
 		msg += "I have been removed from your account and will no longer send notifications.\n\n"
 		msg += fmt.Sprintf("👤 <b>By:</b> %s", FormatUser(sender))
 	default:
-		msg = fmt.Sprintf("🤖 <b>Installation Update:</b> `%s`", EscapeHTML(action))
+		msg = fmt.Sprintf("🤖 <b>Installation Update:</b> <code>%s</code>", EscapeHTML(action))
 	}
 
 	return msg, nil
@@ -2033,7 +2033,7 @@ func FormatGenericEvent(event interface{}) (string, *gotgbot.InlineKeyboardMarku
 	eventType = strings.TrimPrefix(eventType, "*github.")
 	msg := fmt.Sprintf(
 		"⚙️ <b>GitHub event received</b>\n\n"+
-			"<b>Type:</b> `%s`\n\n"+
+			"<b>Type:</b> <code>%s</code>\n\n"+
 			"<i>This event type is supported by the webhook parser but does not have a specialized formatter yet.</i>",
 		EscapeHTML(eventType),
 	)

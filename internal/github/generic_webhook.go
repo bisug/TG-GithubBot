@@ -64,13 +64,13 @@ func FormatGenericWebhookEvent(event *GenericWebhookEvent) (string, *gotgbot.Inl
 		title += " " + titleText(event.Action)
 	}
 
-	msg := fmt.Sprintf("📬 *%s*\n\n", EscapeHTML(title))
+	msg := fmt.Sprintf("📬 <b>%s</b>\n\n", EscapeHTML(title))
 	var buttonURL string
 
 	if repo := event.Repository; repo != nil {
 		repoName := firstNonEmpty(repo.FullName, repo.Name)
 		if repoName != "" {
-			msg += fmt.Sprintf("*Repository:* %s\n", FormatRepo(repoName))
+			msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(repoName))
 		}
 		buttonURL = firstNonEmpty(repo.HTMLURL, buttonURL)
 	}
@@ -78,7 +78,7 @@ func FormatGenericWebhookEvent(event *GenericWebhookEvent) (string, *gotgbot.Inl
 	if org := event.Organization; org != nil {
 		orgName := firstNonEmpty(org.Login, org.Name)
 		if orgName != "" {
-			msg += fmt.Sprintf("*Organization:* %s\n", FormatUser(orgName))
+			msg += fmt.Sprintf("<b>Organization:</b> %s\n", FormatUser(orgName))
 		}
 		buttonURL = firstNonEmpty(buttonURL, org.HTMLURL)
 	}
@@ -86,13 +86,13 @@ func FormatGenericWebhookEvent(event *GenericWebhookEvent) (string, *gotgbot.Inl
 	if sender := event.Sender; sender != nil {
 		senderName := firstNonEmpty(sender.Login, sender.Name)
 		if senderName != "" {
-			msg += fmt.Sprintf("*By:* %s\n", FormatUser(senderName))
+			msg += fmt.Sprintf("<b>By:</b> %s\n", FormatUser(senderName))
 		}
 		buttonURL = firstNonEmpty(buttonURL, sender.HTMLURL)
 	}
 
 	if event.Action != "" {
-		msg += fmt.Sprintf("*Action:* `%s`", EscapeHTML(event.Action))
+		msg += fmt.Sprintf("<b>Action:</b> <code>%s</code>", EscapeHTML(event.Action))
 	}
 
 	return FormatMessageWithButton(strings.TrimSpace(msg), "View on GitHub", buttonURL)
