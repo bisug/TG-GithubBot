@@ -73,6 +73,7 @@ func run() (runErr error) {
 	oauthStateCache := cache.New[string, int64]()
 	contextCache := cache.New[string, models.MessageContext]()
 	actionCache := cache.New[string, models.PRActionContext]()
+	searchCache := cache.New[string, int64]()
 
 	b, err := gotgbot.NewBot(cfg.TelegramToken, nil)
 	if err != nil {
@@ -93,7 +94,7 @@ func run() (runErr error) {
 	dispatcher.AddHandlerToGroup(handlers.NewCallback(nil, middleware.TrackUserAndChat(database)), -1)
 
 	// Commands
-	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache)
+	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, searchCache)
 	dispatcher.AddHandler(handlers.NewCommand("start", cmdHandler.Start))
 	dispatcher.AddHandler(handlers.NewCommand("connect", cmdHandler.Connect))
 	dispatcher.AddHandler(handlers.NewCommand("add", cmdHandler.AddRepo))
@@ -122,9 +123,16 @@ func run() (runErr error) {
 		}
 
 		return msg.ReplyToMessage != nil
-	}, replyHandler.HandleReply))
+	}, func(b *gotgbot.Bot, ctx *ext.Context) error {
+		// Repo search replies are consumed by the search flow; anything else
+		// falls through to the comment reply handler.
+		if cmdHandler.HandleRepoSearchReply(b, ctx) {
+			return nil
+		}
+		return replyHandler.HandleReply(b, ctx)
+	}))
 
-	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache)
+	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache).WithCommandHandler(cmdHandler)
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("c:"), cbHandler.HandleSettings))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("act:"), cbHandler.HandlePRAction))
 
@@ -237,7 +245,7 @@ func run() (runErr error) {
 				return
 			}
 
-			_, _ = b.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", html.EscapeString(u.GetLogin())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			_, _ = b.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!\n\nUse /addrepo to link a repository and start receiving notifications.", html.EscapeString(u.GetLogin())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		}()
 
 		htmlBody := fmt.Sprintf(`
@@ -370,6 +378,7 @@ func run() (runErr error) {
 				oauthStateCache.Cleanup()
 				contextCache.Cleanup()
 				actionCache.Cleanup()
+				searchCache.Cleanup()
 				webhookServer.DeliverySeen.Cleanup()
 				webhookServer.Pacer.Cleanup()
 				clientFactory.Cleanup()

@@ -33,9 +33,12 @@ type CommandHandler struct {
 	ClientFactory *gh.ClientFactory
 	EncryptionKey string
 	ContextCache  *cache.Cache[string, models.MessageContext]
+	// SearchCache tracks pending repo-search prompts: the ForceReply message
+	// ID -> chat that issued the search. The reply handler consumes it.
+	SearchCache *cache.Cache[string, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
 	return &CommandHandler{
 		Config:        cfg,
 		DB:            database,
@@ -44,6 +47,7 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 		ClientFactory: factory,
 		EncryptionKey: key,
 		ContextCache:  ctxCache,
+		SearchCache:   searchCache,
 	}
 }
 
@@ -66,11 +70,17 @@ func (h *CommandHandler) Start(b *gotgbot.Bot, ctx *ext.Context) error {
 I can help you manage your GitHub repositories and notifications directly from Telegram.
 
 <b>Get Started:</b>
-1. Use /connect to link your GitHub account.
+1. Connect your GitHub account (button below or /connect).
 2. Use /addrepo to link a repository and start receiving notifications.
 3. Use /settings to customize your notification preferences.
 
 Need help? Type /help for a full list of commands.`
+
+	// Deep-link payload: /start connect behaves like /connect (private chat only).
+	if len(ctx.Args()) > 1 && ctx.Args()[1] == "connect" && ctx.EffectiveChat.Type == gotgbot.ChatTypePrivate {
+		return h.Connect(b, ctx)
+	}
+
 	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
 }
@@ -125,6 +135,10 @@ func addRepoPageCallback(page int) string {
 
 func addRepoIDCallback(repoID int64) string {
 	return settingsCallback("c", "ar", "id", strconv.FormatInt(repoID, 10))
+}
+
+func addRepoSearchCallback() string {
+	return settingsCallback("c", "ar", "search")
 }
 
 func repoSettingsCallback(link models.RepoLink) string {
@@ -255,6 +269,86 @@ func (h *CommandHandler) listUserRepos(b *gotgbot.Bot, ctx *ext.Context) error {
 	return h.sendRepoList(b, ctx, 1)
 }
 
+// PromptRepoSearch sends a ForceReply message asking for a search query and
+// records it in SearchCache so the reply handler can pick it up.
+func (h *CommandHandler) PromptRepoSearch(b *gotgbot.Bot, ctx *ext.Context) error {
+	sent, err := ctx.EffectiveMessage.Reply(b, "Type part of a repository name to search:", &gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.ForceReply{ForceReply: true, Selective: true},
+	})
+	if err != nil {
+		return err
+	}
+	h.SearchCache.Set(strconv.FormatInt(sent.MessageId, 10), ctx.EffectiveChat.Id, 10*time.Minute)
+	return nil
+}
+
+// HandleRepoSearchReply processes a reply to the search prompt: fetches the
+// user's repos and shows the ones matching the query.
+func (h *CommandHandler) HandleRepoSearchReply(b *gotgbot.Bot, ctx *ext.Context) bool {
+	msg := ctx.EffectiveMessage
+	if msg.ReplyToMessage == nil {
+		return false
+	}
+
+	key := strconv.FormatInt(msg.ReplyToMessage.MessageId, 10)
+	chatID, ok := h.SearchCache.Get(key)
+	if !ok || chatID != ctx.EffectiveChat.Id {
+		return false
+	}
+	h.SearchCache.Delete(key)
+
+	query := strings.ToLower(strings.TrimSpace(msg.GetText()))
+	if query == "" {
+		_, _ = msg.Reply(b, "Empty search. Use /addrepo to browse instead.", nil)
+		return true
+	}
+
+	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+	if err != nil {
+		_, _ = msg.Reply(b, "Please /connect your GitHub account first.", nil)
+		return true
+	}
+
+	// Fetch a few pages of the user's repos and filter client-side. GitHub's
+	// search API needs different scopes and rate limits; this keeps it simple.
+	var matches []*github.Repository
+	for page := 1; page <= 5 && len(matches) < 30; page++ {
+		repos, resp, err := client.Repositories.List(context.Background(), "", &github.RepositoryListOptions{
+			Sort:        "updated",
+			Direction:   "desc",
+			ListOptions: github.ListOptions{PerPage: 100, Page: page},
+		})
+		if err != nil {
+			_, _ = msg.Reply(b, "Failed to fetch repositories from GitHub.", nil)
+			return true
+		}
+		for _, repo := range repos {
+			if strings.Contains(strings.ToLower(repo.GetFullName()), query) {
+				matches = append(matches, repo)
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+	}
+
+	if len(matches) == 0 {
+		_, _ = msg.Reply(b, fmt.Sprintf("No repositories matching <b>%s</b> found in the first pages of your account.", html.EscapeString(query)), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return true
+	}
+
+	var kb [][]gotgbot.InlineKeyboardButton
+	for _, repo := range matches {
+		kb = append(kb, ui.Row(ui.AddRepoButton(repo.GetFullName(), addRepoIDCallback(repo.GetID()))))
+	}
+
+	_, _ = msg.Reply(b, fmt.Sprintf("Repositories matching <b>%s</b>:", html.EscapeString(query)), &gotgbot.SendMessageOpts{
+		ParseMode:   "HTML",
+		ReplyMarkup: ui.Markup(kb...),
+	})
+	return true
+}
+
 func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int) error {
 	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
@@ -293,6 +387,10 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 	if navRow := ui.RepoPageNav(page, resp, addRepoPageCallback); len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
+	kb = append(kb, ui.Row(ui.Callback("🔍 Search", addRepoSearchCallback(),
+		ui.WithStyle(ui.StylePrimary),
+		ui.WithCustomEmojiEnv(ui.IconChoose),
+	)))
 
 	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.SendMessageOpts{
 		ReplyMarkup: ui.Markup(kb...),
@@ -395,10 +493,10 @@ func (h *CommandHandler) Repos(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	var msg string
 	for _, l := range links {
-		msg += fmt.Sprintf("• <b>%s</b>\n", l.RepoFullName)
+		msg += fmt.Sprintf("• %s\n", gh.FormatRepo(l.RepoFullName))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "<b>Linked Repositories:</b>\n"+msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = ctx.EffectiveMessage.Reply(b, "<b>Linked Repositories:</b>\n"+msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
 	return err
 }
 

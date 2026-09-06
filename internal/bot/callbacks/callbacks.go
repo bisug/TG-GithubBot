@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github-webhook/internal/bot/commands"
 	"github-webhook/internal/bot/ui"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
@@ -30,6 +31,9 @@ type CallbackHandler struct {
 	ClientFactory *github.ClientFactory
 	EncryptionKey string
 	ActionCache   *cache.Cache[string, models.PRActionContext]
+	// CommandHandler is set when the search flow is enabled; it owns the
+	// ForceReply prompt + pending-search cache.
+	CommandHandler *commands.CommandHandler
 }
 
 func (h *CallbackHandler) getClient(b *gotgbot.Bot, ctx *ext.Context) (*gh.Client, error) {
@@ -55,6 +59,13 @@ func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.Cli
 	}
 }
 
+// WithCommandHandler wires the command handler so callback flows (repo
+// search) can reuse its message-based prompts.
+func (h *CallbackHandler) WithCommandHandler(ch *commands.CommandHandler) *CallbackHandler {
+	h.CommandHandler = ch
+	return h
+}
+
 // Event aliases to compress callback data
 var eventToShort = map[string]string{}
 var shortToEvent = map[string]string{}
@@ -77,6 +88,7 @@ const (
 	cbIndividual     = "iev"
 	cbStop           = "stop"
 	cbStopConfirm    = "stopok"
+	cbTestHook       = "test"
 )
 
 func cb(parts ...string) string {
@@ -137,6 +149,9 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			if subAction == "id" {
 				repoID, _ := strconv.ParseInt(parts[3], 10, 64)
 				return h.handleAddRepoByID(b, ctx, repoID)
+			}
+			if subAction == "search" {
+				return h.handleRepoSearch(b, ctx)
 			}
 		}
 
@@ -229,6 +244,8 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return h.showStopNotificationsConfirm(b, ctx, link)
 		} else if action == cbStopConfirm {
 			return h.handleStopNotifications(b, ctx, link)
+		} else if action == cbTestHook {
+			return h.handleTestHook(b, ctx, link)
 		}
 	}
 
@@ -606,6 +623,17 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
+// handleRepoSearch answers the callback and sends the ForceReply prompt via
+// the shared CommandHandler so the pending-search bookkeeping lives in one place.
+func (h *CallbackHandler) handleRepoSearch(b *gotgbot.Bot, ctx *ext.Context) error {
+	_, _ = ctx.CallbackQuery.Answer(b, nil)
+	if h.CommandHandler == nil {
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Search is unavailable here. Use /addrepo owner/repo directly."})
+		return nil
+	}
+	return h.CommandHandler.PromptRepoSearch(b, ctx)
+}
+
 func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page int) error {
 	client, err := h.getClient(b, ctx)
 	if err != nil {
@@ -759,12 +787,48 @@ func (h *CallbackHandler) repoMenuButtons(l *models.RepoLink) [][]gotgbot.Inline
 			ui.WithStyle(ui.StylePrimary),
 			ui.WithCustomEmojiEnv(ui.IconChoose),
 		)),
+		ui.Row(ui.Callback("Test webhook", cbRepo(cbTestHook, l),
+			ui.WithStyle(ui.StylePrimary),
+			ui.WithCustomEmojiEnv(ui.IconGitHub),
+		)),
 		ui.Row(ui.Callback("Stop notifications", cbRepo(cbStop, l),
 			ui.WithStyle(ui.StyleDanger),
 			ui.WithCustomEmojiEnv(ui.IconStop),
 		)),
 	)
 	return buttons
+}
+
+// handleTestHook asks GitHub to send a ping delivery to the repository webhook
+// so the user can verify end-to-end delivery from the repo menu.
+func (h *CallbackHandler) handleTestHook(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink) error {
+	if l.WebhookID == 0 {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "This link has no webhook ID; cannot test.", ShowAlert: true})
+		return nil
+	}
+
+	client, err := h.getClient(b, ctx)
+	if err != nil {
+		return nil
+	}
+
+	owner, repo, ok := strings.Cut(l.RepoFullName, "/")
+	if !ok {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name.", ShowAlert: true})
+		return nil
+	}
+
+	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repo, l.WebhookID); err != nil {
+		if h.handleAuthError(b, ctx, err) {
+			return nil
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: fmt.Sprintf("Test failed: %v", err), ShowAlert: true})
+		return nil
+	}
+
+	slog.Info("Webhook ping requested from repo menu", "repo", l.RepoFullName, "hook_id", l.WebhookID)
+	_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Ping sent! A test notification should arrive shortly.", ShowAlert: true})
+	return nil
 }
 
 func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error {

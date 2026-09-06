@@ -144,9 +144,15 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 
 	commitCount := len(commits)
 	commitPlural := pluralSuffix(commitCount)
-	title := fmt.Sprintf("🔨 <b>%d new commit%s to</b> <code>%s:%s</code>\n\n", commitCount, commitPlural, EscapeHTML(repo), EscapeHTML(refName))
+	// Clickable repo link in the header so users can jump straight to the repo
+	// (or the branch tree) from the notification.
+	repoLink := FormatRepo(repo)
+	if refType == "branch" && repoURL != "" {
+		repoLink = fmt.Sprintf(`<a href="%s/tree/%s">%s</a>`, EscapeHTMLURL(repoURL), EscapeHTMLURL(refName), EscapeHTML(repo))
+	}
+	title := fmt.Sprintf("🔨 <b>%d new commit%s to</b> %s:<code>%s</code>\n\n", commitCount, commitPlural, repoLink, EscapeHTML(refName))
 	if commitCount == 0 {
-		title = fmt.Sprintf("🔨 <b>Push to</b> <code>%s:%s</code>\n\n", EscapeHTML(repo), EscapeHTML(refName))
+		title = fmt.Sprintf("🔨 <b>Push to</b> %s:<code>%s</code>\n\n", repoLink, EscapeHTML(refName))
 	}
 	msg := title
 
@@ -199,9 +205,9 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 
 	if len(msg) > 4000 {
 		msg = fmt.Sprintf(
-			"🔨 <b>%d new commit(s) to</b> <code>%s:%s</code>\n\n"+
+			"🔨 <b>%d new commit(s) to</b> %s:<code>%s</code>\n\n"+
 				"⚠️ <i>Too many commits to display, check the repository for details.</i>\n",
-			commitCount, EscapeHTML(repo), EscapeHTML(refName),
+			commitCount, repoLink, EscapeHTML(refName),
 		)
 	}
 
