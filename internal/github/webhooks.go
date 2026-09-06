@@ -61,8 +61,24 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 	}
 }
 
+// Handler receives repository webhook deliveries on /webhook/<token>.
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
-	// Path: /webhook/<token>
+	s.serveWebhook(w, r, "/webhook/", s.Config.GitHubWebhookSecret)
+}
+
+// AppHandler receives GitHub App webhook deliveries on /app-webhook/<token>.
+// It shares the repo-webhook pipeline (token-in-path chat routing, HMAC
+// verification, delivery dedup, formatting, per-chat pacing); only the path
+// prefix and the signing secret differ. App-level events (installation, ping,
+// ...) already have formatters. Repo-scoped events still require the chat to
+// have linked the repository, so an installation cannot spray unrelated repos
+// into a chat.
+func (s *WebhookServer) AppHandler(w http.ResponseWriter, r *http.Request) {
+	s.serveWebhook(w, r, "/app-webhook/", s.Config.GitHubAppWebhookSecret)
+}
+
+func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pathPrefix, secret string) {
+	// Path: <pathPrefix><token>
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -77,8 +93,8 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
 	hookIDHeader := r.Header.Get("X-GitHub-Hook-ID")
 	path := r.URL.Path
-	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
-		token := path[9:] // strip "/webhook/"
+	if strings.HasPrefix(path, pathPrefix) && len(path) > len(pathPrefix) {
+		token := path[len(pathPrefix):] // strip the prefix
 		decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
 		if err == nil {
 			id, err := strconv.ParseInt(decrypted, 10, 64)
@@ -111,7 +127,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	if sig == "" {
 		sig = r.Header.Get("X-Hub-Signature")
 	}
-	payload, err := github.ValidatePayloadFromBody(r.Header.Get("Content-Type"), r.Body, sig, []byte(s.Config.GitHubWebhookSecret))
+	payload, err := github.ValidatePayloadFromBody(r.Header.Get("Content-Type"), r.Body, sig, []byte(secret))
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
@@ -120,10 +136,10 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if s.Config.GitHubWebhookSecret == "" {
-			slog.Error("Webhook REJECTED: signature present but GITHUB_WEBHOOK_SECRET is empty; cannot verify", "event", eventType, "delivery", deliveryID, "chat", chatID, "error", err)
+		if secret == "" {
+			slog.Error("Webhook REJECTED: signature present but no webhook secret is configured for this endpoint", "event", eventType, "delivery", deliveryID, "chat", chatID, "path", pathPrefix, "error", err)
 		} else {
-			slog.Error("Webhook REJECTED: signature mismatch (GitHub secret does not match GITHUB_WEBHOOK_SECRET)", "event", eventType, "delivery", deliveryID, "chat", chatID, "error", err)
+			slog.Error("Webhook REJECTED: signature mismatch (GitHub secret does not match the configured webhook secret)", "event", eventType, "delivery", deliveryID, "chat", chatID, "path", pathPrefix, "error", err)
 		}
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return

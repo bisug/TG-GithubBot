@@ -5,22 +5,26 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	TelegramToken       string
-	TelegramWebhookURL  string
-	MongoDBURI          string
-	DatabaseName        string
-	GitHubWebhookSecret string
-	GitHubClientID      string
-	GitHubClientSecret  string
-	Port                string
-	EncryptionKey       string
-	UsePolling          bool
+	TelegramToken          string
+	TelegramWebhookURL     string
+	MongoDBURI             string
+	DatabaseName           string
+	GitHubWebhookSecret    string
+	GitHubClientID         string
+	GitHubClientSecret     string
+	Port                   string
+	EncryptionKey          string
+	UsePolling             bool
+	GitHubAppID            int64  // 0 = GitHub App mode disabled
+	GitHubAppPrivateKey    string // path to the app's PEM key
+	GitHubAppWebhookSecret string // falls back to GitHubWebhookSecret
 }
 
 func Load() *Config {
@@ -55,17 +59,37 @@ func Load() *Config {
 		os.Exit(1)
 	}
 
+	// GitHub App mode is optional: set GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY
+	// to receive app-level webhook events on /app-webhook/<token>.
+	githubAppID := int64(0)
+	if raw := strings.TrimSpace(os.Getenv("GITHUB_APP_ID")); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			slog.Error("Invalid GITHUB_APP_ID (must be numeric)", "error", err)
+			os.Exit(1)
+		}
+		githubAppID = id
+	}
+
+	githubAppWebhookSecret := strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET"))
+	if githubAppWebhookSecret == "" {
+		githubAppWebhookSecret = strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET"))
+	}
+
 	return &Config{
-		TelegramToken:       strings.TrimSpace(os.Getenv("TELEGRAM_TOKEN")),
-		TelegramWebhookURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_URL")), "/"),
-		MongoDBURI:          strings.TrimSpace(os.Getenv("MONGODB_URI")),
-		DatabaseName:        getEnv("DATABASE_NAME", "github_bot"),
-		GitHubWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")),
-		GitHubClientID:      strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")),
-		GitHubClientSecret:  strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET")),
-		Port:                getEnv("PORT", "8080"),
-		EncryptionKey:       encryptionKey,
-		UsePolling:          usePolling,
+		TelegramToken:          strings.TrimSpace(os.Getenv("TELEGRAM_TOKEN")),
+		TelegramWebhookURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_URL")), "/"),
+		MongoDBURI:             strings.TrimSpace(os.Getenv("MONGODB_URI")),
+		DatabaseName:           getEnv("DATABASE_NAME", "github_bot"),
+		GitHubWebhookSecret:    strings.TrimSpace(os.Getenv("GITHUB_WEBHOOK_SECRET")),
+		GitHubClientID:         strings.TrimSpace(os.Getenv("GITHUB_CLIENT_ID")),
+		GitHubClientSecret:     strings.TrimSpace(os.Getenv("GITHUB_CLIENT_SECRET")),
+		Port:                   getEnv("PORT", "8080"),
+		EncryptionKey:          encryptionKey,
+		UsePolling:             usePolling,
+		GitHubAppID:            githubAppID,
+		GitHubAppPrivateKey:    strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY")),
+		GitHubAppWebhookSecret: githubAppWebhookSecret,
 	}
 }
 

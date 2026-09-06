@@ -170,6 +170,16 @@ func run() (runErr error) {
 
 	webhookServer := github.NewWebhookServer(cfg, database, b, contextCache, actionCache)
 	mux.HandleFunc("/webhook/", webhookServer.Handler)
+	// GitHub App mode: /app-webhook/<token> receives app-level deliveries
+	// (installation, ping, ...). Registered unconditionally so the endpoint
+	// answers 401 instead of falling through to the landing page; events only
+	// flow when the app is configured and installed.
+	mux.HandleFunc("/app-webhook/", webhookServer.AppHandler)
+	if cfg.GitHubAppID != 0 {
+		slog.Info("GitHub App mode enabled", "app_id", cfg.GitHubAppID,
+			"private_key_configured", cfg.GitHubAppPrivateKey != "",
+			"webhook_secret_configured", cfg.GitHubAppWebhookSecret != "")
+	}
 	mux.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
