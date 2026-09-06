@@ -170,5 +170,9 @@ func CompactButtonText(name string) string {
 	if len(name) <= max {
 		return name
 	}
-	return name[:max-1] + "…"
+	truncated := []rune(name)
+	if len(truncated) <= max {
+		return name
+	}
+	return string(truncated[:max-1]) + "…"
 }

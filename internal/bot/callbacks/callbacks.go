@@ -591,7 +591,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if len(links) == 0 {
 		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "No repositories linked. Use /addrepo first."})
-		return err
+		return nil
 	}
 
 	var kb [][]gotgbot.InlineKeyboardButton
@@ -685,7 +685,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		}
 		msg := fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr)
 		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: msg, ParseMode: "HTML"})
-		return err
+		return nil
 	}
 
 	webhookID := createdHook.GetID()
