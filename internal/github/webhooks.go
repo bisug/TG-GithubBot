@@ -478,6 +478,16 @@ func eventRepoFullName(event interface{}) string {
 			return firstNonEmpty(r.FullName, r.Name)
 		}
 	}
+	switch e := event.(type) {
+	case *IssueDependenciesEvent:
+		return firstNonEmpty(e.Repository.GetFullName(), e.Repository.GetName())
+	case *RepositoryAdvisoryEvent:
+		return firstNonEmpty(e.Repository.GetFullName(), e.Repository.GetName())
+	case *SecretScanningScanEvent:
+		return firstNonEmpty(e.Repository.GetFullName(), e.Repository.GetName())
+	case *SubIssuesEvent:
+		return firstNonEmpty(e.Repository.GetFullName(), e.Repository.GetName())
+	}
 	return ""
 }
 
@@ -568,6 +578,14 @@ func (s *WebhookServer) formatMessage(event interface{}) (msg string, markup *go
 	switch e := event.(type) {
 	case *GenericWebhookEvent:
 		return FormatGenericWebhookEvent(e)
+	case *IssueDependenciesEvent:
+		return FormatIssueDependenciesEvent(e)
+	case *RepositoryAdvisoryEvent:
+		return FormatRepositoryAdvisoryEvent(e)
+	case *SecretScanningScanEvent:
+		return FormatSecretScanningScanEvent(e)
+	case *SubIssuesEvent:
+		return FormatSubIssuesEvent(e)
 	case *github.PushEvent:
 		return FormatPushEvent(e)
 	case *github.PullRequestEvent:

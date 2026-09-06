@@ -31,6 +31,12 @@ func parseWebhookEvent(eventType string, payload []byte) (interface{}, error) {
 		return event, nil
 	}
 
+	// go-github v90 has no payload structs for these events; try the local
+	// typed definitions before falling back to the bare generic card.
+	if typed, ok := parseTypedWebhookEvent(eventType, payload); ok {
+		return typed, nil
+	}
+
 	generic, genericErr := parseGenericWebhookEvent(eventType, payload)
 	if genericErr != nil {
 		return nil, fmt.Errorf("%w; generic parse failed: %v", err, genericErr)

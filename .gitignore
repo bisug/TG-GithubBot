@@ -3,3 +3,4 @@
 *.exe
 /bot
 /tg-githubbot
+.agents
