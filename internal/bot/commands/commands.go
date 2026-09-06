@@ -513,6 +513,7 @@ func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
 /close - Close an issue or PR (reply to notification).
 /reopen - Reopen an issue or PR (reply to notification).
 /approve - Approve a PR (reply to notification).
+/merge - Merge a PR (reply to notification).
 
 <b>Configuration</b>
 /settings - Configure event notifications
@@ -637,6 +638,47 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, err = msg.Reply(b, fmt.Sprintf("✅ PR #%d approved.", mContext.IssueNumber), nil)
+	return err
+}
+
+func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
+	msg := ctx.EffectiveMessage
+	if err := requireAdminOrPrivate(b, ctx, "Only admins can merge pull requests in this chat."); err != nil {
+		return err
+	}
+
+	if msg.ReplyToMessage == nil {
+		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
+		return err
+	}
+
+	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	if !found {
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
+		return err
+	}
+
+	if mContext.Type != "pr" && mContext.Type != "pr_review" && mContext.Type != "pr_review_comment" {
+		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
+		return err
+	}
+
+	client, err := h.getAuthenticatedClient(b, ctx)
+	if err != nil {
+		return nil
+	}
+
+	// Merge method left empty: GitHub picks the method allowed by the repo.
+	_, _, err = client.PullRequests.Merge(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, "", nil)
+	if err != nil {
+		if h.handleAuthError(b, ctx, err) {
+			return nil
+		}
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to merge:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return nil
+	}
+
+	_, err = msg.Reply(b, fmt.Sprintf("🔀 PR #%d merged.", mContext.IssueNumber), nil)
 	return err
 }
 

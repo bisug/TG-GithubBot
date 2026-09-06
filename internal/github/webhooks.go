@@ -525,7 +525,8 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 	row := ui.Row(
 		ui.Callback("✅ Approve", "act:approve:"+id, ui.WithStyle(ui.StyleSuccess)),
-		ui.Callback("🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
+		ui.Callback("� Merge", "act:merge:"+id, ui.WithStyle(ui.StyleSuccess)),
+		ui.Callback("�🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
 	)
 
 	if markup == nil {

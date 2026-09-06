@@ -877,6 +877,11 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	case "approve":
 		_, _, err = client.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: gh.String("APPROVE")})
 		msg = "Approved!"
+	case "merge":
+		// Merge method left empty: GitHub picks the method allowed by the repo
+		// (merge commit first, then squash, then rebase).
+		_, _, err = client.PullRequests.Merge(ctxBg, owner, repo, prNum, "", nil)
+		msg = "Merged!"
 	case "close":
 		state := "closed"
 		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: &state})

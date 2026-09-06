@@ -110,6 +110,7 @@ func run() (runErr error) {
 	dispatcher.AddHandler(handlers.NewCommand("close", cmdHandler.Close))
 	dispatcher.AddHandler(handlers.NewCommand("reopen", cmdHandler.Reopen))
 	dispatcher.AddHandler(handlers.NewCommand("approve", cmdHandler.Approve))
+	dispatcher.AddHandler(handlers.NewCommand("merge", cmdHandler.Merge))
 
 	replyHandler := commands.NewReplyHandler(database, clientFactory, cfg.EncryptionKey, contextCache)
 	dispatcher.AddHandler(handlers.NewMessage(func(msg *gotgbot.Message) bool {
