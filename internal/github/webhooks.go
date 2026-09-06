@@ -295,16 +295,20 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 		}
 
 		if isChatNotFound(err) {
-			// Permanent: the chat no longer exists or the bot cannot reach it. Log
-			// clearly so the operator removes the stale GitHub webhook.
-			slog.Warn("Skipping unreachable chat: chat not found (remove the webhook for this chat)", "chat", chatID, "event", eventType, "delivery", deliveryID)
+			// Permanent: the chat no longer exists or the bot cannot reach it.
+			// Drop the chat's links so GitHub webhooks stop firing into a void;
+			// the GitHub-side hooks stay (we lack a user token here) but the
+			// processEvent link check now rejects their deliveries.
+			slog.Warn("Chat not found; removing chat links", "chat", chatID, "event", eventType, "delivery", deliveryID)
+			s.removeChatLinks(chatID)
 			return nil, err
 		}
 
 		if isChatBlocked(err) {
 			// Permanent: the bot was blocked or removed. Retrying only hammers a
 			// dead target on every subsequent event.
-			slog.Warn("Skipping chat: bot blocked or removed from the chat (remove the webhook for this chat)", "chat", chatID, "event", eventType, "delivery", deliveryID)
+			slog.Warn("Bot blocked or removed from chat; removing chat links", "chat", chatID, "event", eventType, "delivery", deliveryID)
+			s.removeChatLinks(chatID)
 			return nil, err
 		}
 
@@ -348,6 +352,22 @@ func isTooManyRequests(err error) (time.Duration, bool) {
 		return time.Duration(te.ResponseParams.RetryAfter) * time.Second, true
 	}
 	return 2 * time.Second, true
+}
+
+// removeChatLinks drops all repository links for a permanently unreachable chat
+// (deleted, bot blocked/kicked). Best-effort: failures are logged, not propagated —
+// the send path already treats the chat as dead.
+func (s *WebhookServer) removeChatLinks(chatID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
+	defer cancel()
+	links, err := s.DB.RemoveChatLinks(ctx, chatID)
+	if err != nil {
+		slog.Error("Failed to remove links for dead chat", "chat", chatID, "error", err)
+		return
+	}
+	if len(links) > 0 {
+		slog.Info("Removed links for dead chat", "chat", chatID, "count", len(links))
+	}
 }
 
 // isChatNotFound reports whether err is Telegram's "Bad Request: chat not found".
@@ -429,6 +449,14 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	}
 
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
+
+	// Also persist to Mongo so reply actions survive restarts. Best-effort:
+	// the in-memory cache still serves until the next deploy.
+	storeCtx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
+	defer cancel()
+	if err := s.DB.StoreMessageContext(storeCtx, chatID, messageID, ctx); err != nil {
+		slog.Warn("Failed to persist message context", "key", key, "error", err)
+	}
 }
 
 // eventRepoFullName extracts the "owner/repo" full name from any event payload

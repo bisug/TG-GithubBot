@@ -509,10 +509,9 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
-	mContext, found := h.ContextCache.Get(key)
+	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	if !found {
-		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours, or the bot restarted).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
 		return err
 	}
 
@@ -554,10 +553,9 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 		return err
 	}
 
-	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
-	mContext, found := h.ContextCache.Get(key)
+	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	if !found {
-		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours, or the bot restarted).\nUse the buttons on the notification, or open the item on GitHub to act on it.", nil)
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the item on GitHub to act on it.", nil)
 		return err
 	}
 
@@ -601,4 +599,22 @@ func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context
 	}
 
 	return client, nil
+}
+
+// lookupMessageContext resolves the GitHub context for a notification message:
+// in-memory cache first, then Mongo (so actions survive restarts).
+func (h *CommandHandler) lookupMessageContext(chatID, messageID int64) (models.MessageContext, bool) {
+	key := fmt.Sprintf("%d:%d", chatID, messageID)
+	if mc, ok := h.ContextCache.Get(key); ok {
+		return mc, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mc, err := h.DB.GetMessageContext(ctx, chatID, messageID)
+	if err != nil {
+		return models.MessageContext{}, false
+	}
+	// Re-populate the hot cache for subsequent lookups.
+	h.ContextCache.Set(key, mc, 48*time.Hour)
+	return mc, true
 }

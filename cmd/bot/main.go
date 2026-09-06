@@ -130,6 +130,17 @@ func run() (runErr error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
+		// A health check that ignores the database reports "ok" while every
+		// notification silently fails; orchestrators would keep routing
+		// traffic to a broken instance.
+		pingCtx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
+		defer cancel()
+		if err := database.Client.Ping(pingCtx, nil); err != nil {
+			writer.Header().Set("Content-Type", "text/plain")
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte("mongodb unreachable"))
+			return
+		}
 		writer.Header().Set("Content-Type", "text/plain")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("ok"))

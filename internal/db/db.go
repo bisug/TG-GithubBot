@@ -23,6 +23,7 @@ type DB struct {
 	Database *mongo.Database
 	Users    *mongo.Collection
 	Chats    *mongo.Collection
+	MsgCtx   *mongo.Collection
 
 	ChatReposCache *cache.Cache[int64, []models.RepoLink]
 }
@@ -68,6 +69,7 @@ func Connect(cfg *config.Config) (*DB, error) {
 		Database:       db,
 		Users:          db.Collection("users"),
 		Chats:          db.Collection("chats"),
+		MsgCtx:         db.Collection("message_contexts"),
 		ChatReposCache: cache.New[int64, []models.RepoLink](),
 	}
 
@@ -97,7 +99,14 @@ func (d *DB) createIndexes() error {
 		return err
 	}
 
-	return nil
+	// Message contexts expire server-side after 48h so reply-to-comment and
+	// /close /reopen /approve keep working across restarts without manual cleanup.
+	_, err = d.MsgCtx.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "expires_at", Value: 1}},
+		Options: options.Index().SetExpireAfterSeconds(0),
+	})
+
+	return err
 }
 
 func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
@@ -138,6 +147,50 @@ func (d *DB) ClearUserToken(ctx context.Context, userID int64) error {
 	update := bson.M{"$set": bson.M{"encrypted_oauth_token": ""}}
 	_, err := d.Users.UpdateOne(ctx, filter, update)
 	return err
+}
+
+// msgCtxTTL is how long a stored message context stays valid. Matches the
+// in-memory cache TTL so both layers age out together.
+const msgCtxTTL = 48 * time.Hour
+
+// StoreMessageContext persists the GitHub context for a sent notification so
+// reply actions (/close, /reopen, /approve, reply-to-comment) survive restarts.
+// Keyed by chat_id + message_id.
+func (d *DB) StoreMessageContext(ctx context.Context, chatID, messageID int64, mc models.MessageContext) error {
+	doc := bson.M{
+		"_id":          fmt.Sprintf("%d:%d", chatID, messageID),
+		"owner":        mc.Owner,
+		"repo":         mc.Repo,
+		"issue_number": mc.IssueNumber,
+		"comment_id":   mc.CommentID,
+		"type":         mc.Type,
+		"expires_at":   time.Now().Add(msgCtxTTL),
+	}
+	_, err := d.MsgCtx.ReplaceOne(ctx, bson.M{"_id": doc["_id"]}, doc, options.Replace().SetUpsert(true))
+	return err
+}
+
+// GetMessageContext retrieves a stored message context by chat and message ID.
+// Returns mongo.ErrNoDocuments when absent or expired.
+func (d *DB) GetMessageContext(ctx context.Context, chatID, messageID int64) (models.MessageContext, error) {
+	var doc struct {
+		Owner       string `bson:"owner"`
+		Repo        string `bson:"repo"`
+		IssueNumber int    `bson:"issue_number"`
+		CommentID   int64  `bson:"comment_id"`
+		Type        string `bson:"type"`
+	}
+	err := d.MsgCtx.FindOne(ctx, bson.M{"_id": fmt.Sprintf("%d:%d", chatID, messageID)}).Decode(&doc)
+	if err != nil {
+		return models.MessageContext{}, err
+	}
+	return models.MessageContext{
+		Owner:       doc.Owner,
+		Repo:        doc.Repo,
+		IssueNumber: doc.IssueNumber,
+		CommentID:   doc.CommentID,
+		Type:        doc.Type,
+	}, nil
 }
 
 func (d *DB) GetChat(ctx context.Context, chatID int64) (*models.Chat, error) {
@@ -204,6 +257,27 @@ func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName stri
 
 	d.ChatReposCache.Delete(chatID)
 	return err
+}
+
+// RemoveChatLinks removes every repository link from a chat (used when the chat
+// is permanently unreachable, e.g. the bot was blocked). Returns the removed
+// links so callers can attempt GitHub-side webhook cleanup.
+func (d *DB) RemoveChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink, error) {
+	links, err := d.GetChatLinks(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	if len(links) == 0 {
+		return nil, nil
+	}
+
+	_, err = d.Chats.UpdateOne(ctx, bson.M{"_id": chatID}, bson.M{"$set": bson.M{"links": bson.A{}}})
+	if err != nil {
+		return nil, err
+	}
+
+	d.ChatReposCache.Delete(chatID)
+	return links, nil
 }
 
 // GetChatLinks returns all repository links for a chat
