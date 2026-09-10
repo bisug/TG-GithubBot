@@ -68,6 +68,36 @@ func TestConsumeConcurrent(t *testing.T) {
 	}
 }
 
+// TestAddIfAbsent verifies that AddIfAbsent claims a key exactly once under
+// concurrency (best-effort dedup semantics).
+func TestAddIfAbsent(t *testing.T) {
+	c := New[string, struct{}]()
+
+	if !c.AddIfAbsent("d1", struct{}{}, 10*time.Minute) {
+		t.Fatal("first AddIfAbsent must succeed")
+	}
+	if c.AddIfAbsent("d1", struct{}{}, 10*time.Minute) {
+		t.Fatal("second AddIfAbsent for the same key must fail")
+	}
+	if _, ok := c.Get("d1"); !ok {
+		t.Fatal("key should be retrievable after AddIfAbsent")
+	}
+
+	results := make(chan bool, 32)
+	for i := 0; i < 16; i++ {
+		go func() { results <- c.AddIfAbsent("d2", struct{}{}, 10*time.Minute) }()
+	}
+	wins := 0
+	for i := 0; i < 16; i++ {
+		if <-results {
+			wins++
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("expected exactly one winner, got %d", wins)
+	}
+}
+
 // TestClaimSingleUse verifies that ClaimSingleUse allows exactly one claim of a
 // pre-seeded token, and that replays are rejected afterwards.
 func TestClaimSingleUse(t *testing.T) {

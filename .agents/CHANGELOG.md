@@ -48,6 +48,35 @@ All notable changes to TG-GithubBot. Format loosely follows Keep a Changelog.
   substring checks misclassified unrelated 400s (e.g. `BUTTON_DATA_INVALID`)
   as markdown failures and hid the real error behind a plain-text retry.
   Tightened to concrete parse/markup signatures.
+- **OAuth login failing after restart**: `/oauth/callback` consumed the
+  used-state gate that is seeded in memory at `/connect` time; a restart
+  between the two steps rejected every valid login ("state already used").
+  `cache.ClaimSingleUse` now claims atomically (CAS issued→claimed, no
+  delete/reinsert race) and claims-on-absent for states issued before a
+  restart, binding each claim to the owning telegram ID.
+- **Polling fallback 409 loop**: after a failed `SetAllBotWebhooks`, the
+  fallback polling loop started without deleting an existing Telegram webhook,
+  so every `getUpdates` failed with a 409 conflict forever. The webhook is now
+  cleared (best-effort) before falling back.
+- **DB errors reported as "not connected"**: `GetClientForUser` mapped any
+  database failure to `ErrUnauthorized`, telling users to `/connect` during a
+  MongoDB outage. Only `mongo.ErrNoDocuments` (or an empty stored token) means
+  "not connected"; other errors propagate.
+- **Webhook link-check misclassification**: `processEvent` logged database
+  failures as Info "repository not linked", masking outages as unlink
+  activity. DB failures are now logged distinctly as errors.
+- **Channel-reply panic**: replying (with text) to a bot notification in a
+  channel hit a nil `EffectiveUser` dereference in the comment-reply handler
+  (recovered by the dispatcher, but the reply was lost). Guarded.
+- **Webhook delivery dedup race**: the `X-GitHub-Delivery` seen-set used a
+  non-atomic check-then-set; two racing redeliveries could both process.
+  Now claimed atomically via `cache.AddIfAbsent`.
+- **Mid-tag message truncation**: the 4096-rune cap cut HTML mid-tag/mid-entity
+  and left tags unclosed, forcing Telegram to reject the message and triggering
+  the plain-text fallback. `truncateTelegramHTML` now avoids tag/entity splits
+  and closes tags left open by the cut.
+- **Webhook token in logs**: the invalid-token rejection logged the full request
+  path, which contains the chat's bearer token. Redacted (endpoint prefix only).
 
 ### Deferred
 - Phase 6 digests (require an event storage layer that does not exist yet).

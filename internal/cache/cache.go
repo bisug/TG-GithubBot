@@ -68,6 +68,17 @@ func (c *Cache[K, V]) Consume(key K) (V, bool) {
 	return itm.value, true
 }
 
+// AddIfAbsent atomically adds key with value and TTL, returning true only if
+// the key was not present (or was expired). Use it for best-effort dedup sets:
+// racing callers cannot both observe "absent" and both proceed.
+func (c *Cache[K, V]) AddIfAbsent(key K, value V, ttl time.Duration) bool {
+	_, loaded := c.items.LoadOrStore(key, item[V]{
+		value:      value,
+		expiration: time.Now().Add(ttl),
+	})
+	return !loaded
+}
+
 // Cleanup removes expired items
 func (c *Cache[K, V]) Cleanup() {
 	c.items.Range(func(key, value any) bool {

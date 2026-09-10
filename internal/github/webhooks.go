@@ -110,7 +110,7 @@ func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pat
 	}
 
 	if chatID == 0 {
-		slog.Warn("Webhook rejected: invalid token", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "remote", r.RemoteAddr, "path", r.URL.Path)
+		slog.Warn("Webhook rejected: invalid token", "event", eventType, "delivery", deliveryID, "hook_id", hookIDHeader, "remote", r.RemoteAddr, "endpoint", pathPrefix)
 		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
@@ -158,12 +158,13 @@ func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pat
 	}
 
 	if deliveryID != "" {
-		if _, seen := s.DeliverySeen.Get(deliveryID); seen {
+		// Atomic claim: two racing deliveries with the same X-GitHub-Delivery
+		// cannot both pass a check-then-set here.
+		if !s.DeliverySeen.AddIfAbsent(deliveryID, struct{}{}, 10*time.Minute) {
 			slog.Info("Webhook duplicate delivery ignored", "event", eventType, "delivery", deliveryID, "chat", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		s.DeliverySeen.Set(deliveryID, struct{}{}, 10*time.Minute)
 	}
 
 	s.Wg.Add(1)
@@ -211,9 +212,7 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	// Telegram rejects messages over 4096 runes. The plain-text fallback already
 	// truncates; cap here too so a long formatted event is not lost outright.
 	const maxTelegramText = 4096
-	if runes := []rune(msg); len(runes) > maxTelegramText {
-		msg = string(runes[:maxTelegramText-1]) + "…"
-	}
+	msg = truncateTelegramHTML(msg, maxTelegramText)
 
 	var threadID int64
 	if hookID != 0 {
@@ -576,6 +575,97 @@ func isMarkdownParseError(err error) bool {
 		strings.Contains(d, "message markup") ||
 		strings.Contains(d, "button_markup_invalid") ||
 		strings.Contains(d, "button_data_invalid")
+}
+
+// htmlTagRe matches complete HTML tags in formatted messages. Text content is
+// pre-escaped (literal '<' appears as "&lt;"), so every real '<' starts a tag.
+var htmlTagRe = regexp.MustCompile(`<(/?)([a-zA-Z0-9-]+)([^>]*)>`)
+
+// truncateTelegramHTML caps an HTML message at maxRunes runes without cutting
+// inside a tag or entity, and closes any tags left open by the cut so the
+// result is still well-formed HTML for Telegram's parser. A naive rune cut
+// can split a tag or leave tags unclosed, forcing Telegram to reject the
+// message and triggering the plain-text fallback (degraded formatting).
+func truncateTelegramHTML(msg string, maxRunes int) string {
+	runes := []rune(msg)
+	if len(runes) <= maxRunes {
+		return msg
+	}
+
+	const ellipsis = "…"
+	end := maxRunes - len([]rune(ellipsis))
+
+	// Closing tags appended after the cut also consume runes; iterate until
+	// the total fits (nesting depth is small, so this converges immediately).
+	var closers []string
+	for range 4 {
+		end = maxRunes - len([]rune(ellipsis)) - totalRunes(closers)
+
+		// If the cut lands inside a tag, move it back to just before the tag.
+		lastOpen, lastClose := -1, -1
+		for i := 0; i < end; i++ {
+			switch runes[i] {
+			case '<':
+				lastOpen = i
+			case '>':
+				lastClose = i
+			}
+		}
+		if lastOpen > lastClose {
+			end = lastOpen
+		}
+
+		// If the cut lands inside an entity (e.g. "&am|p;"), move back before
+		// the '&'. Entities are short; scanning back past ';' (complete) or a
+		// few runes is enough.
+		for i := end - 1; i >= 0 && i >= end-10; i-- {
+			if runes[i] == ';' {
+				break
+			}
+			if runes[i] == '&' {
+				end = i
+				break
+			}
+		}
+
+		// Track tags still open at the cut point.
+		closers = closers[:0]
+		var stack []string
+		for _, m := range htmlTagRe.FindAllStringSubmatch(string(runes[:end]), -1) {
+			name := strings.ToLower(m[2])
+			if strings.HasSuffix(strings.TrimSpace(m[3]), "/") {
+				continue // self-closing
+			}
+			if m[1] == "/" {
+				if n := len(stack); n > 0 && stack[n-1] == name {
+					stack = stack[:n-1]
+				}
+			} else {
+				stack = append(stack, name)
+			}
+		}
+		for i := len(stack) - 1; i >= 0; i-- {
+			closers = append(closers, "</"+stack[i]+">")
+		}
+
+		if end+len([]rune(ellipsis))+totalRunes(closers) <= maxRunes {
+			break
+		}
+	}
+
+	out := string(runes[:end]) + ellipsis
+	for _, c := range closers {
+		out += c
+	}
+	return out
+}
+
+func totalRunes(parts []string) int {
+	n := 0
+	for _, p := range parts {
+		n += len([]rune(p))
+	}
+	return n
 }
 
 // normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
