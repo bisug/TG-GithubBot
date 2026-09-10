@@ -530,6 +530,10 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 // GitHub API round-trip after every toggle.
 func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, hook *gh.Hook, page int, note string) error {
 	parts := strings.Split(l.RepoFullName, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
+		return nil
+	}
 	owner, repoName := parts[0], parts[1]
 
 	enabledEvents := make(map[string]bool)

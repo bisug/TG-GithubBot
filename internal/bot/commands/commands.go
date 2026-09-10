@@ -26,22 +26,24 @@ import (
 )
 
 type CommandHandler struct {
-	Config        *config.Config
-	DB            *db.DB
-	OAuth         *gh.OAuth
-	StateCache    *cache.Cache[string, int64]
+	Config     *config.Config
+	DB         *db.DB
+	OAuth      *gh.OAuth
+	StateCache *cache.Cache[string, int64]
 	// UsedStateCache tracks OAuth states that have been issued so the callback
-	// can atomically claim them (single-use) and reject replays.
-	UsedStateCache *cache.Cache[string, struct{}]
-	ClientFactory *gh.ClientFactory
-	EncryptionKey string
-	ContextCache  *cache.Cache[string, models.MessageContext]
+	// can atomically claim them (single-use, via cache.ClaimSingleUse) and
+	// reject replays. Entries hold the owning telegram ID; the zero value marks
+	// an already-claimed state.
+	UsedStateCache *cache.Cache[string, int64]
+	ClientFactory  *gh.ClientFactory
+	EncryptionKey  string
+	ContextCache   *cache.Cache[string, models.MessageContext]
 	// SearchCache tracks pending repo-search prompts: the ForceReply message
 	// ID -> chat that issued the search. The reply handler consumes it.
 	SearchCache *cache.Cache[string, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], usedStateCache *cache.Cache[string, struct{}], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], usedStateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
 	return &CommandHandler{
 		Config:         cfg,
 		DB:             database,
@@ -116,9 +118,10 @@ func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
 
 	h.StateCache.Set(state, userID, 10*time.Minute)
 	if h.UsedStateCache != nil {
-		// Pre-seed the single-use claim set so the callback can atomically
-		// redeem the state exactly once (and reject concurrent/sequential replays).
-		h.UsedStateCache.Set(state, struct{}{}, 10*time.Minute)
+		// Pre-seed the single-use claim set with the owning telegram ID so the
+		// callback can atomically redeem the state exactly once (and reject
+		// concurrent/sequential replays).
+		h.UsedStateCache.Set(state, userID, 10*time.Minute)
 	}
 	return h.OAuth.GetLoginURL(state), nil
 }

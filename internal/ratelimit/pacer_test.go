@@ -30,11 +30,15 @@ func TestPacerConcurrentSameChat(t *testing.T) {
 	const n = 20
 	var wg sync.WaitGroup
 	finishes := make(chan time.Duration, n)
+	// Measure every waiter against one shared start time: the last send cannot
+	// complete before (n-1) intervals after the FIRST reservation. Starting the
+	// clock inside each goroutine would make the measurement flaky, because any
+	// goroutine-scheduling delay before p.Wait shrinks the measured wait.
+	start := time.Now()
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			start := time.Now()
 			p.Wait(200, 0)
 			finishes <- time.Since(start)
 		}()

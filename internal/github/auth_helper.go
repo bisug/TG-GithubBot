@@ -9,6 +9,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/google/go-github/v90/github"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 // ErrUnauthorized is returned by GetClientForUser when the user has no linked GitHub
@@ -19,7 +20,16 @@ var ErrUnauthorized = errors.New("unauthorized")
 // and returns an authenticated GitHub client.
 func GetClientForUser(ctx context.Context, database *db.DB, factory *ClientFactory, userID int64, encryptionKey string) (*github.Client, error) {
 	user, err := database.GetUserByTelegramID(ctx, userID)
-	if err != nil || user.EncryptedOAuthToken == "" {
+	if err != nil {
+		// Only "no such user" means the account is not linked; a transient
+		// database failure must not be reported as "please /connect", which
+		// would mislead the user during an outage.
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, ErrUnauthorized
+		}
+		return nil, fmt.Errorf("lookup user: %w", err)
+	}
+	if user.EncryptedOAuthToken == "" {
 		return nil, ErrUnauthorized
 	}
 

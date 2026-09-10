@@ -14,11 +14,11 @@ func TestAdminCacheKeyDistinct(t *testing.T) {
 		{chat: -100123456789, user: 123456789},
 		{chat: -100123456789, user: -9876543212345},
 		{chat: -100987654321, user: 123456789},
-		{chat: 123456789,     user: -100123456789},
-		{chat: 8539254782,    user: 2147483648},
-		{chat: 2147483648,    user: 8539254782},
-		{chat: 42,            user: 7},
-		{chat: 6,             user: 49},
+		{chat: 123456789, user: -100123456789},
+		{chat: 8539254782, user: 2147483648},
+		{chat: 2147483648, user: 8539254782},
+		{chat: 42, user: 7},
+		{chat: 6, user: 49},
 	}
 	keys := make([]int64, len(pairs))
 	for i, p := range pairs {

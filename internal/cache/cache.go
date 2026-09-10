@@ -78,3 +78,42 @@ func (c *Cache[K, V]) Cleanup() {
 		return true
 	})
 }
+
+// ClaimSingleUse atomically claims a pre-seeded single-use token. The token is
+// seeded with a non-zero issued value (via Set); a successful claim transitions
+// the entry to the zero value of V (the "claimed" marker) via compare-and-swap,
+// so exactly one presenter can ever win, even under concurrency, without the
+// delete-then-reinsert gap that Consume followed by Set would have.
+//
+// If the key is absent (e.g. the token was issued before a process restart, so
+// the in-memory pre-seed was lost, but the token itself is still
+// cryptographically valid), the first presenter claims it via LoadOrStore and
+// all later presentations are rejected. This keeps the single-use guarantee
+// intact across restarts instead of rejecting every valid login.
+//
+// Expired entries and entries already carrying the zero value (claimed) are
+// rejected. V must be comparable and the issued value must be non-zero.
+func ClaimSingleUse[K comparable, V comparable](c *Cache[K, V], key K, issued V, claimTTL time.Duration) bool {
+	var zero V
+	now := time.Now()
+	for {
+		val, ok := c.items.Load(key)
+		if !ok {
+			// Absent: claim it. LoadOrStore is atomic, so exactly one racing
+			// presenter wins; the zero-value marker is never consumable.
+			_, loaded := c.items.LoadOrStore(key, item[V]{value: zero, expiration: now.Add(claimTTL)})
+			return !loaded
+		}
+		itm := val.(item[V])
+		if now.After(itm.expiration) || itm.value == zero {
+			return false // expired, or already claimed
+		}
+		if itm.value != issued {
+			return false // issued for a different identity
+		}
+		if c.items.CompareAndSwap(key, val, item[V]{value: zero, expiration: now.Add(claimTTL)}) {
+			return true
+		}
+		// Lost a CAS race with a concurrent claim; retry.
+	}
+}

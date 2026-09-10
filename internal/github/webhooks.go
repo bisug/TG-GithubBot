@@ -233,7 +233,14 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 		_, err := s.DB.GetRepoLink(ctx, chatID, repoFullName)
 		cancel()
 		if err != nil {
-			slog.Info("Webhook skipped: repository not linked to this chat", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID)
+			if errors.Is(err, db.ErrLinkNotFound) {
+				slog.Info("Webhook skipped: repository not linked to this chat", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID)
+			} else {
+				// A database failure is not the same as "not linked": log it
+				// distinctly so outages are visible instead of masquerading as
+				// unlink activity.
+				slog.Error("Webhook skipped: link lookup failed", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID, "error", err)
+			}
 			return
 		}
 	}

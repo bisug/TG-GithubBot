@@ -40,6 +40,14 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
+	// Channel posts carry no sending user (ctx.EffectiveUser is nil), so a
+	// reply to a notification posted in a channel cannot be attributed to a
+	// GitHub account; accessing EffectiveUser.Id would panic (recovered by the
+	// dispatcher, but the update is lost).
+	if ctx.EffectiveUser == nil {
+		return nil
+	}
+
 	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	if !found {
 		return nil

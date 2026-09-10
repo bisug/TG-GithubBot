@@ -71,7 +71,10 @@ func run() (runErr error) {
 	oauth := github.NewOAuth(cfg)
 	clientFactory := github.NewClientFactory()
 	oauthStateCache := cache.New[string, int64]()
-	oauthStateUsed := cache.New[string, struct{}]()
+	// oauthStateUsed tracks OAuth states that have been issued (pre-seeded with
+	// the owning telegram ID) so the callback can atomically claim them
+	// (single-use) and reject replays.
+	oauthStateUsed := cache.New[string, int64]()
 	contextCache := cache.New[string, models.MessageContext]()
 	actionCache := cache.New[string, models.PRActionContext]()
 	searchCache := cache.New[string, int64]()
@@ -217,10 +220,14 @@ func run() (runErr error) {
 		// `state` may only be presented once: if two browsers (or an attacker
 		// who saw the URL) race to the callback, the second must be rejected
 		// instead of exchanging the same `code` twice. The used-state cache is
-		// pre-seeded at /connect time (see loginURLForUser); Consume uses
-		// load-and-delete, so exactly one presenter can redeem it atomically.
+		// pre-seeded at /connect time (see loginURLForUser) with the owning
+		// telegram ID; ClaimSingleUse transitions it atomically, so exactly one
+		// presenter can redeem it. If the state was issued before a restart
+		// (pre-seed lost but still cryptographically valid via resolveOAuthState
+		// above), it is claimed on first presentation instead of being rejected,
+		// and replays after that are still refused.
 		oauthStateCache.Delete(state)
-		if _, ok := oauthStateUsed.Consume(state); !ok {
+		if !cache.ClaimSingleUse(oauthStateUsed, state, telegramID, 10*time.Minute) {
 			slog.Warn("OAuth callback rejected: state already used")
 			http.Error(w, "Invalid or expired state. Please return to Telegram and run /connect again.", http.StatusBadRequest)
 			return
@@ -363,6 +370,14 @@ func run() (runErr error) {
 		})
 		if err != nil {
 			slog.Error("Failed to set Telegram webhook; falling back to polling", "error", err)
+			// A previously-set webhook that is still active at Telegram makes
+			// every getUpdates call fail with a 409 "terminated by other
+			// getUpdates request" conflict, so clear it before polling.
+			if ok, delErr := b.DeleteWebhook(nil); delErr != nil {
+				slog.Warn("Failed to delete webhook before polling fallback", "error", delErr)
+			} else if ok {
+				slog.Info("Deleted existing webhook before polling fallback")
+			}
 			go func() {
 				for {
 					err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true})
