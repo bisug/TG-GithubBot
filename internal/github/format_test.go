@@ -137,3 +137,98 @@ func TestSupportedEventsAndPresetsAreRepoHookAllowed(t *testing.T) {
 		}
 	}
 }
+func TestFormatCommitCommentEventCommitLinkHrefAndText(t *testing.T) {
+	// Regression: href and visible text swapped, producing
+	// <a href="0123456">https://github.com/...</a>, mirroring the push bug.
+	msg, _ := FormatCommitCommentEvent(&gh.CommitCommentEvent{
+		Action: gh.Ptr("created"),
+		Repo: &gh.Repository{
+			FullName: gh.Ptr("owner/repo"),
+			HTMLURL:  gh.Ptr("https://github.com/owner/repo"),
+		},
+		Sender: &gh.User{Login: gh.Ptr("octocat")},
+		Comment: &gh.RepositoryComment{
+			CommitID: gh.Ptr("0123456789abcdef"),
+			HTMLURL:  gh.Ptr("https://github.com/owner/repo/commit/0123456789abcdef"),
+		},
+	})
+	want := `<a href="https://github.com/owner/repo/commit/0123456789abcdef"><code>0123456</code></a>`
+	if !strings.Contains(msg, want) {
+		t.Fatalf("FormatCommitCommentEvent commit link missing %q in:\n%s", want, msg)
+	}
+}
+
+func TestFormatStatusEventCommitLinkHrefAndText(t *testing.T) {
+	// Regression: same href/text swap in the status formatter.
+	msg, _ := FormatStatusEvent(&gh.StatusEvent{
+		State: gh.Ptr("success"),
+		Commit: &gh.RepositoryCommit{
+			SHA:     gh.Ptr("0123456789abcdef"),
+			HTMLURL: gh.Ptr("https://github.com/owner/repo/commit/0123456789abcdef"),
+			Commit:  &gh.Commit{Message: gh.Ptr("Build passed")},
+		},
+		Repo:    &gh.Repository{FullName: gh.Ptr("owner/repo"), HTMLURL: gh.Ptr("https://github.com/owner/repo")},
+		Sender:  &gh.User{Login: gh.Ptr("octocat")},
+		Context: gh.Ptr("ci"),
+	})
+	want := `<a href="https://github.com/owner/repo/commit/0123456789abcdef"><code>0123456</code></a>`
+	if !strings.Contains(msg, want) {
+		t.Fatalf("FormatStatusEvent commit link missing %q in:\n%s", want, msg)
+	}
+}
+
+func TestFormatWorkflowRunEventOmitsStatusWhenNoConclusion(t *testing.T) {
+	msg, _ := FormatWorkflowRunEvent(&gh.WorkflowRunEvent{
+		Action:   gh.Ptr("completed"),
+		Workflow: &gh.Workflow{Name: gh.Ptr("CI")},
+		WorkflowRun: &gh.WorkflowRun{
+			Status:  gh.Ptr("completed"),
+			HTMLURL: gh.Ptr("https://github.com/owner/repo/actions/runs/1"),
+		},
+		Repo:   &gh.Repository{FullName: gh.Ptr("owner/repo")},
+		Sender: &gh.User{Login: gh.Ptr("octocat")},
+	})
+	if strings.Contains(msg, "<b>Status:</b>") {
+		t.Fatalf("FormatWorkflowRunEvent with empty conclusion should omit the Status line, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "<b>Workflow Run Completed in</b>") {
+		t.Fatalf("FormatWorkflowRunEvent header = %q, want title-cased 'Completed'", msg)
+	}
+}
+
+func TestFormatSponsorshipTierChangeHasNoPlaceholder(t *testing.T) {
+	msg, _ := FormatSponsorshipEvent(&gh.SponsorshipEvent{
+		Action: gh.Ptr("tier_changed"),
+		Sender: &gh.User{Login: gh.Ptr("octocat"), HTMLURL: gh.Ptr("https://github.com/octocat")},
+		Changes: &gh.SponsorshipChanges{
+			Tier: &gh.SponsorshipTier{From: gh.Ptr("bronze")},
+		},
+	})
+	if strings.Contains(msg, "new_tier") {
+		t.Fatalf("FormatSponsorshipEvent rendered the literal 'new_tier' placeholder:\n%s", msg)
+	}
+	if !strings.Contains(msg, "<b>Tier Changed From:</b> <code>bronze</code>") {
+		t.Fatalf("FormatSponsorshipEvent tier change missing, got:\n%s", msg)
+	}
+}
+
+func TestFormatHeadersUseTitleCaseActionAndFieldLines(t *testing.T) {
+	issueMsg, _ := FormatIssuesEvent(&gh.IssuesEvent{
+		Action: gh.Ptr("opened"),
+		Repo:   &gh.Repository{FullName: gh.Ptr("owner/repo"), HTMLURL: gh.Ptr("https://github.com/owner/repo")},
+		Sender: &gh.User{Login: gh.Ptr("octocat")},
+		Issue:  &gh.Issue{Title: gh.Ptr("A bug"), Number: gh.Ptr(1), HTMLURL: gh.Ptr("https://github.com/owner/repo/issues/1")},
+	})
+	if !strings.Contains(issueMsg, "📌 <b>Issue Opened #1</b>") {
+		t.Fatalf("FormatIssuesEvent header = %q, want '📌 <b>Issue Opened #1</b>'", issueMsg)
+	}
+
+	milestoneMsg, _ := FormatMilestoneEvent(&gh.MilestoneEvent{
+		Action: gh.Ptr("opened"),
+		Repo:   &gh.Repository{FullName: gh.Ptr("owner/repo"), HTMLURL: gh.Ptr("https://github.com/owner/repo")},
+		Sender: &gh.User{Login: gh.Ptr("octocat")},
+	})
+	if !strings.Contains(milestoneMsg, "🏁 <b>Milestone Opened</b>") {
+		t.Fatalf("FormatMilestoneEvent header = %q, want '🏁 <b>Milestone Opened</b>'", milestoneMsg)
+	}
+}

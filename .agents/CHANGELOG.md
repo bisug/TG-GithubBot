@@ -21,6 +21,32 @@ All notable changes to TG-GithubBot. Format loosely follows Keep a Changelog.
   `GITHUB_APP_WEBHOOK_SECRET` env vars (unset = pure repo-webhook mode).
 
 ### Removed
+### Changed
+- **Notification formatting overhaul** — standardized all event headers and
+  layouts for a consistent, scannable look:
+  - Emoji moved outside the `<b>` tag so headers are fully bold sentences:
+    Issues («📌 <b>Issue Opened #1</b>»), PR, Delete, Fork, Watch, Star,
+    Member, Repository events.
+  - Clean field lines: each `<b>Label:</b> value` on its own line, `By` and
+    `State` as dedicated fields (PR state is now title-cased «Open/Closed»);
+    dropped the stray `👤 `/`📦 ` prefixes from PageBuild/Ping/Installation.
+  - Header verbs title-cased across ~30 long-tail formatters (Milestone,
+    Review, Discussion, Alerts, Deployments, Branch Protection, Sponsorship,
+    …) so headers read «Label Opened» instead of «Label opened».
+  - Commit/Issue comment events use the standard header + explicit `By`.
+- **Fixed two href/text swap bugs** in `FormatCommitCommentEvent` and
+  `FormatStatusEvent` (the same swap previously fixed in the push formatter):
+  the visible text was the URL and the href the SHA. Links now point at the
+  commit with the short SHA as text.
+- **Sponsorship tier change**: the fixed email-formatting section rendered a
+  literal `new_tier` placeholder (the new-tier value is not in the v90
+  payload); now shows «Tier Changed From» with only the known previous tier.
+- **Workflow Run**: replaced the two nearly identical `fmt.Sprintf` blocks
+  (the second existed only to omit the Status line when there is no
+  conclusion) with a single template and a conditional Status line.
+- Added regression tests: commit-comment/status commit links (href/text),
+  workflow-run no-conclusion header, sponsorship placeholder, and header
+  title-casing conventions.
 - Deprecated classic Projects events (`project`, `project_card`,
   `project_column`) from `SupportedEvents`.
 

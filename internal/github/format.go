@@ -19,8 +19,8 @@ func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboa
 	number := issue.GetNumber()
 
 	msg := fmt.Sprintf(
-		"<b>📌 %s issue #%d</b>\n"+
-			"<b>Title:</b> %s\n\n"+
+		"📌 <b>Issue %s #%d</b>\n"+
+			"<b>Title:</b> %s\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
 		EscapeHTML(titleText(action)),
@@ -67,15 +67,16 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 	number := pr.GetNumber()
 
 	msg := fmt.Sprintf(
-		"<b>🚀 PR %s #%d: %s</b>\n\n"+
+		"🚀 <b>PR %s #%d: %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>By:</b> %s | <b>State:</b> %s\n",
+			"<b>By:</b> %s\n"+
+			"<b>State:</b> %s\n",
 		EscapeHTML(titleText(action)),
 		number,
 		EscapeHTML(title),
 		FormatRepo(repo),
 		FormatUser(sender),
-		EscapeHTML(state),
+		EscapeHTML(titleText(state)),
 	)
 
 	switch action {
@@ -350,11 +351,12 @@ func FormatDeleteEvent(event *github.DeleteEvent) (string, *gotgbot.InlineKeyboa
 	}
 
 	msg := fmt.Sprintf(
-		"%s <b>Deleted %s:</b> <code>%s</code>\n\n"+
+		"%s <b>%s deleted</b>\n\n"+
+			"<b>Name:</b> <code>%s</code>\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s",
 		emoji,
-		EscapeHTML(refType),
+		EscapeHTML(titleText(refType)),
 		EscapeHTML(ref),
 		FormatRepo(repo),
 		FormatUser(sender),
@@ -368,7 +370,7 @@ func FormatForkEvent(event *github.ForkEvent) (string, *gotgbot.InlineKeyboardMa
 	forkedRepo := event.Forkee.GetFullName()
 	sender := event.Sender.GetLogin()
 	msg := fmt.Sprintf(
-		"🍴 %s forked by %s\n\n"+
+		"🍴 <b>%s forked by %s</b>\n\n"+
 			"✨ <b>Stars:</b> %d | 🍴 <b>Forks:</b> %d",
 		FormatRepo(originalRepo),
 		FormatUser(sender),
@@ -390,15 +392,16 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 	actionEmoji := emojiOr(commentActionEmoji, action, "⚠️")
 
 	msg := fmt.Sprintf(
-		"%s <b>%s %s comment on commit</b>\n\n"+
+		"%s <b>Commit Comment %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>Commit:</b> <a href=\"%s\"><code>%s</code></a>\n",
+			"<b>Commit:</b> <a href=\"%s\"><code>%s</code></a>\n"+
+			"<b>By:</b> %s\n",
 		actionEmoji,
-		FormatUser(sender),
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo),
-		EscapeHTML(ShortSHA(commitSHA)),
 		commitURL,
+		EscapeHTML(ShortSHA(commitSHA)),
+		FormatUser(sender),
 	)
 
 	if action == "created" || action == "edited" {
@@ -429,19 +432,20 @@ func FormatIssueCommentEvent(event *github.IssueCommentEvent) (string, *gotgbot.
 	actionEmoji := emojiOr(commentActionEmoji, action, "⚠️")
 
 	msg := fmt.Sprintf(
-		"%s <b>%s %s comment on</b> <a href=\"%s\">%s#%d</a>\n\n"+
-			"<b>Title:</b> %s\n",
+		"%s <b>Comment %s on</b> <a href=\"%s\">%s#%d</a>\n\n"+
+			"<b>Title:</b> %s\n"+
+			"<b>By:</b> %s\n",
 		actionEmoji,
-		FormatUser(sender),
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		EscapeHTMLURL(issue.GetHTMLURL()),
 		EscapeHTML(repo),
 		issue.GetNumber(),
 		EscapeHTML(issue.GetTitle()),
+		FormatUser(sender),
 	)
 
 	if action == "created" || action == "edited" {
-		msg += fmt.Sprintf("<b>Comment:</b> %s", FormatTextWithMarkdown(comment.GetBody()))
+		msg += fmt.Sprintf("<b>Comment:</b> %s\n", FormatTextWithMarkdown(comment.GetBody()))
 	}
 
 	return FormatMessageWithButton(msg, "View Comment", comment.GetHTMLURL())
@@ -460,7 +464,7 @@ func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboa
 	}, actionInfo{"⚠️", "performed action on"})
 
 	msg := fmt.Sprintf(
-		"%s <b>%s</b> %s <b>%s</b>\n\n"+
+		"%s <b>%s %s %s</b>\n\n"+
 			"<b>By:</b> %s",
 		info.emoji,
 		FormatUser(member),
@@ -499,8 +503,8 @@ func FormatRepositoryEvent(event *github.RepositoryEvent) (string, *gotgbot.Inli
 	}, actionInfo{"⚠️", fmt.Sprintf("performed %s action", action)})
 
 	msg := fmt.Sprintf(
-		"%s %s %s\n\n"+
-			"👤 <b>By:</b> %s",
+		"%s <b>%s %s</b>\n\n"+
+			"<b>By:</b> %s",
 		info.emoji,
 		FormatRepo(repo),
 		EscapeHTML(info.text),
@@ -545,7 +549,7 @@ func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboard
 	if action == "started" {
 		repo := event.GetRepo()
 		msg := fmt.Sprintf(
-			"⭐ %s starred %s\n\n"+
+			"⭐ <b>%s starred %s</b>\n\n"+
 				"✨ <b>Stars:</b> %d | 🍴 <b>Forks:</b> %d",
 			FormatUser(event.GetSender().GetLogin()),
 			FormatRepo(repo.GetFullName()),
@@ -581,8 +585,8 @@ func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboa
 			"<b>By:</b> %s",
 		stateEmoji,
 		EscapeHTML(titleText(state)),
-		EscapeHTML(ShortSHA(event.GetCommit().GetSHA())),
 		EscapeHTMLURL(event.GetCommit().GetHTMLURL()),
+		EscapeHTML(ShortSHA(event.GetCommit().GetSHA())),
 		FormatRepo(event.GetRepo().GetFullName()),
 		EscapeHTML(event.GetDescription()),
 		FormatUser(event.GetSender().GetLogin()),
@@ -631,30 +635,21 @@ func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.Inline
 		statusLabel = "Unknown status"
 	}
 
+	statusLine := ""
+	if conclusion != "" {
+		statusLine = "<b>Status:</b> <code>" + EscapeHTML(statusLabel) + "</code>\n"
+	}
 	msg := fmt.Sprintf(
 		"%s <b>Workflow Run %s in</b> %s\n\n"+
-			"<b>Workflow:</b> <code>%s</code>\n"+
-			"<b>Status:</b> <code>%s</code>\n"+
+			"<b>Workflow:</b> <code>%s</code>\n%s"+
 			"<b>By:</b> %s",
 		statusEmoji,
-		EscapeHTML(titleText(conclusion)),
+		EscapeHTML(firstNonEmpty(titleText(conclusion), statusLabel)),
 		FormatRepo(repo),
 		EscapeHTML(workflow),
-		EscapeHTML(statusLabel),
+		statusLine,
 		FormatUser(sender),
 	)
-	if conclusion == "" {
-		msg = fmt.Sprintf(
-			"%s <b>Workflow Run %s in</b> %s\n\n"+
-				"<b>Workflow:</b> <code>%s</code>\n"+
-				"<b>By:</b> %s",
-			statusEmoji,
-			EscapeHTML(statusLabel),
-			FormatRepo(repo),
-			EscapeHTML(workflow),
-			FormatUser(sender),
-		)
-	}
 	return FormatMessageWithButton(msg, "View Workflow Run", run.GetHTMLURL())
 }
 
@@ -799,7 +794,7 @@ func FormatStarEvent(e *github.StarEvent) (string, *gotgbot.InlineKeyboardMarkup
 	forks := e.GetRepo().GetForksCount()
 
 	msg := fmt.Sprintf(
-		"%s %s %s %s\n\n✨ Stars: %d | 🍴 Forks: %d",
+		"%s <b>%s %s %s</b>\n\n✨ Stars: %d | 🍴 Forks: %d",
 		emoji,
 		FormatUser(user),
 		EscapeHTML(actionText),
@@ -871,7 +866,7 @@ func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent
 			"<b>PR:</b> <a href=\"%s\">%s#%d</a>\n"+
 			"<b>Comment:</b> %s\n",
 		actionEmoji,
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo),
 		EscapeHTMLURL(pr.GetHTMLURL()),
 		EscapeHTML(pr.GetTitle()),
@@ -900,7 +895,7 @@ func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *go
 			"<b>State:</b> %s\n"+
 			"<b>By:</b> %s\n",
 		stateEmoji,
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(e.GetRepo().GetFullName()),
 		EscapeHTMLURL(pr.GetHTMLURL()),
 		EscapeHTML(pr.GetTitle()),
@@ -919,14 +914,11 @@ func FormatPingEvent(e *github.PingEvent) (string, *gotgbot.InlineKeyboardMarkup
 	}
 
 	if e.GetRepo() != nil {
-		msg += fmt.Sprintf(
-			"📦 %s\n",
-			FormatRepo(e.GetRepo().GetFullName()),
-		)
+		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName()))
 	}
 
 	if e.GetSender() != nil {
-		msg += fmt.Sprintf("👤 <b>By:</b> %s\n", FormatUser(e.GetSender().GetLogin()))
+		msg += fmt.Sprintf("<b>By:</b> %s\n", FormatUser(e.GetSender().GetLogin()))
 	}
 
 	if e.GetOrg() != nil {
@@ -949,11 +941,13 @@ func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotgbot.Inline
 	msg := fmt.Sprintf(
 		"💖 <b>Sponsorship %s</b>\n\n"+
 			"<b>Sponsor:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatUser(sender.GetLogin()),
 	)
 	if sponsorship != nil && sponsorship.Tier != nil {
-		msg += fmt.Sprintf("<b>Tier:</b> <code>%s</code> -> <code>%s</code>\n", EscapeHTML(sponsorship.Tier.GetFrom()), "new_tier")
+		if from := sponsorship.Tier.GetFrom(); from != "" {
+			msg += fmt.Sprintf("<b>Tier Changed From:</b> <code>%s</code>\n", EscapeHTML(from))
+		}
 	}
 
 	return FormatMessageWithButton(msg, "View Sponsorship", sender.GetHTMLURL())
@@ -966,7 +960,7 @@ func FormatUserEvent(e *github.UserEvent) (string, *gotgbot.InlineKeyboardMarkup
 	msg := fmt.Sprintf(
 		"👤 <b>User %s</b>\n\n"+
 			"<b>User:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatUser(user.GetLogin()),
 	)
 
@@ -1001,7 +995,7 @@ func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *go
 			"<b>Repository:</b> %s\n"+
 			"<b>Ruleset:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(ruleset.GetName()),
 		FormatUser(sender.GetLogin()),
@@ -1021,7 +1015,7 @@ func FormatSecretScanningAlertEvent(e *github.SecretScanningAlertEvent) (string,
 			"<b>Repository:</b> %s\n"+
 			"<b>Secret Type:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(alert.GetSecretType()),
 		FormatUser(sender.GetLogin()),
@@ -1039,7 +1033,7 @@ func FormatSecretScanningAlertLocationEvent(e *github.SecretScanningAlertLocatio
 		"📍 <b>Secret Scanning Alert Location %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1081,7 +1075,7 @@ func FormatPullRequestReviewThreadEvent(e *github.PullRequestReviewThreadEvent) 
 			"<b>Repository:</b> %s\n"+
 			"<b>Pull Request:</b> <a href=\"%s\">%s</a>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(pr.GetTitle()),
 		EscapeHTMLURL(pr.GetHTMLURL()),
@@ -1105,7 +1099,7 @@ func FormatPullRequestTargetEvent(e *github.PullRequestTargetEvent) (string, *go
 			"<b>Repository:</b> %s\n"+
 			"<b>Pull Request:</b> <a href=\"%s\">%s</a>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(pr.GetTitle()),
 		EscapeHTMLURL(pr.GetHTMLURL()),
@@ -1126,7 +1120,7 @@ func FormatRegistryPackageEvent(e *github.RegistryPackageEvent) (string, *gotgbo
 			"<b>Repository:</b> %s\n"+
 			"<b>Package:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(pkg.GetName()),
 		FormatUser(sender.GetLogin()),
@@ -1144,7 +1138,7 @@ func FormatMergeGroupEvent(e *github.MergeGroupEvent) (string, *gotgbot.InlineKe
 		"🔄 <b>Merge Group %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1161,7 +1155,7 @@ func FormatPersonalAccessTokenRequestEvent(e *github.PersonalAccessTokenRequestE
 		"🔑 <b>Personal Access Token Request %s</b>\n\n"+
 			"<b>Organization:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		EscapeHTML(org.GetLogin()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1180,7 +1174,7 @@ func FormatProjectV2Event(e *github.ProjectV2Event) (string, *gotgbot.InlineKeyb
 			"<b>Organization:</b> %s\n"+
 			"<b>Project:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		EscapeHTML(org.GetLogin()),
 		EscapeHTML(project.GetTitle()),
 		FormatUser(sender.GetLogin()),
@@ -1199,7 +1193,7 @@ func FormatProjectV2ItemEvent(e *github.ProjectV2ItemEvent) (string, *gotgbot.In
 		"📄 <b>Project Item %s</b>\n\n"+
 			"<b>Organization:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		EscapeHTML(org.GetLogin()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1222,7 +1216,7 @@ func FormatGitHubAppAuthorizationEvent(e *github.GitHubAppAuthorizationEvent) (s
 	msg := fmt.Sprintf(
 		"🔒 <b>GitHub App Authorization %s</b>\n\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatUser(sender.GetLogin()),
 	)
 
@@ -1238,7 +1232,7 @@ func FormatInstallationRepositoriesEvent(e *github.InstallationRepositoriesEvent
 	msg := fmt.Sprintf(
 		"📦 <b>Installation Repositories %s</b>\n\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatUser(sender.GetLogin()),
 	)
 	if len(reposAdded) > 0 {
@@ -1262,7 +1256,7 @@ func FormatInstallationTargetEvent(e *github.InstallationTargetEvent) (string, *
 		"🎯 <b>Installation Target %s</b>\n\n"+
 			"<b>Target:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatUser(target.GetLogin()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1282,7 +1276,7 @@ func FormatDiscussionCommentEvent(e *github.DiscussionCommentEvent) (string, *go
 			"<b>Repository:</b> %s\n"+
 			"<b>Discussion:</b> <a href=\"%s\">%s</a>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(discussion.GetTitle()),
 		EscapeHTMLURL(discussion.GetHTMLURL()),
@@ -1306,7 +1300,7 @@ func FormatDiscussionEvent(e *github.DiscussionEvent) (string, *gotgbot.InlineKe
 			"<b>Repository:</b> %s\n"+
 			"<b>Title:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(discussion.GetTitle()),
 		FormatUser(sender.GetLogin()),
@@ -1327,7 +1321,7 @@ func FormatCodeScanningAlertEvent(e *github.CodeScanningAlertEvent) (string, *go
 			"<b>Rule:</b> %s\n"+
 			"<b>Severity:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(alert.GetRule().GetDescription()),
 		EscapeHTML(alert.GetRuleSeverity()),
@@ -1349,7 +1343,7 @@ func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotgbo
 			"<b>Package:</b> <code>%s</code>\n"+
 			"<b>Severity:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(alert.GetSecurityVulnerability().Package.GetName()),
 		EscapeHTML(alert.GetSecurityVulnerability().GetSeverity()),
@@ -1369,7 +1363,7 @@ func FormatDeploymentProtectionRuleEvent(e *github.DeploymentProtectionRuleEvent
 			"<b>Repository:</b> %s\n"+
 			"<b>Environment:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(e.GetEnvironment()),
 		FormatUser(sender.GetLogin()),
@@ -1388,7 +1382,7 @@ func FormatDeploymentReviewEvent(e *github.DeploymentReviewEvent) (string, *gotg
 			"<b>Repository:</b> %s\n"+
 			"<b>Environment:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(e.GetEnvironment()),
 		FormatUser(sender.GetLogin()),
@@ -1411,7 +1405,7 @@ func FormatContentReferenceEvent(e *github.ContentReferenceEvent) (string, *gotg
 			"<b>Repository:</b> %s\n"+
 			"<b>Reference:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		EscapeHTML(ref.GetReference()),
 		FormatUser(sender.GetLogin()),
@@ -1431,7 +1425,7 @@ func FormatCustomPropertyEvent(e *github.CustomPropertyEvent) (string, *gotgbot.
 			"<b>Organization:</b> %s\n"+
 			"<b>Property Name:</b> <code>%s</code>\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		EscapeHTML(org.GetLogin()),
 		EscapeHTML(prop.GetPropertyName()),
 		FormatUser(sender.GetLogin()),
@@ -1473,7 +1467,7 @@ func FormatBranchProtectionRuleEvent(e *github.BranchProtectionRuleEvent) (strin
 		"🛡️ <b>Branch Protection Rule %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1493,7 +1487,7 @@ func FormatBranchProtectionConfigurationEvent(e *github.BranchProtectionConfigur
 		"🛡️ <b>Branch Protection Configuration %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
 			"<b>By:</b> %s\n",
-		EscapeHTML(action),
+		EscapeHTML(titleText(action)),
 		FormatRepo(repo.GetFullName()),
 		FormatUser(sender.GetLogin()),
 	)
@@ -1531,14 +1525,11 @@ func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyb
 	}
 
 	if e.GetRepo() != nil {
-		msg += fmt.Sprintf(
-			"📦 %s\n",
-			FormatRepo(e.GetRepo().GetFullName()),
-		)
+		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName()))
 	}
 
 	if e.GetSender() != nil {
-		msg += fmt.Sprintf("👤 <b>By:</b> %s", FormatUser(e.GetSender().GetLogin()))
+		msg += fmt.Sprintf("<b>By:</b> %s", FormatUser(e.GetSender().GetLogin()))
 	}
 
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
@@ -1595,7 +1586,7 @@ func FormatMilestoneEvent(e *github.MilestoneEvent) (string, *gotgbot.InlineKeyb
 	milestone := e.GetMilestone()
 	action := e.GetAction()
 
-	msg := fmt.Sprintf("🏁 <b>Milestone %s</b>\n\n", EscapeHTML(action))
+	msg := fmt.Sprintf("🏁 <b>Milestone %s</b>\n\n", EscapeHTML(titleText(action)))
 
 	if milestone != nil {
 		msg += fmt.Sprintf("<b>Title:</b> %s\n", EscapeHTML(milestone.GetTitle()))
@@ -1982,11 +1973,11 @@ func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotgbot.Inli
 	case "created":
 		msg = "🎉 <b>Bot Installed Successfully</b>!\n\n"
 		msg += "I am now linked to your account and will monitor your repositories for updates.\n\n"
-		msg += fmt.Sprintf("👤 <b>By:</b> %s", FormatUser(sender))
+		msg += fmt.Sprintf("<b>By:</b> %s", FormatUser(sender))
 	case "deleted":
 		msg = "🗑️ <b>Bot Uninstalled</b>\n\n"
 		msg += "I have been removed from your account and will no longer send notifications.\n\n"
-		msg += fmt.Sprintf("👤 <b>By:</b> %s", FormatUser(sender))
+		msg += fmt.Sprintf("<b>By:</b> %s", FormatUser(sender))
 	default:
 		msg = fmt.Sprintf("🤖 <b>Installation Update:</b> <code>%s</code>", EscapeHTML(action))
 	}
