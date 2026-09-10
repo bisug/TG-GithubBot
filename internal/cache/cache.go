@@ -50,6 +50,24 @@ func (c *Cache[K, V]) Delete(key K) {
 	c.items.Delete(key)
 }
 
+// Consume atomically takes an item: it returns the value and true only if the
+// key exists and has not expired; the entry is removed either way. Use this
+// for single-use tokens (OAuth states) so two concurrent consumers cannot
+// both redeem the same token.
+func (c *Cache[K, V]) Consume(key K) (V, bool) {
+	val, loaded := c.items.LoadAndDelete(key)
+	if !loaded {
+		var zero V
+		return zero, false
+	}
+	itm := val.(item[V])
+	if time.Now().After(itm.expiration) {
+		var zero V
+		return zero, false
+	}
+	return itm.value, true
+}
+
 // Cleanup removes expired items
 func (c *Cache[K, V]) Cleanup() {
 	c.items.Range(func(key, value any) bool {

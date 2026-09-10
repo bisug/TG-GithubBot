@@ -71,6 +71,7 @@ func run() (runErr error) {
 	oauth := github.NewOAuth(cfg)
 	clientFactory := github.NewClientFactory()
 	oauthStateCache := cache.New[string, int64]()
+	oauthStateUsed := cache.New[string, struct{}]()
 	contextCache := cache.New[string, models.MessageContext]()
 	actionCache := cache.New[string, models.PRActionContext]()
 	searchCache := cache.New[string, int64]()
@@ -94,7 +95,7 @@ func run() (runErr error) {
 	dispatcher.AddHandlerToGroup(handlers.NewCallback(nil, middleware.TrackUserAndChat(database)), -1)
 
 	// Commands
-	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, searchCache)
+	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, oauthStateUsed, clientFactory, cfg.EncryptionKey, contextCache, searchCache)
 	dispatcher.AddHandler(handlers.NewCommand("start", cmdHandler.Start))
 	dispatcher.AddHandler(handlers.NewCommand("connect", cmdHandler.Connect))
 	dispatcher.AddHandler(handlers.NewCommand("add", cmdHandler.AddRepo))
@@ -213,7 +214,17 @@ func run() (runErr error) {
 			return
 		}
 
+		// `state` may only be presented once: if two browsers (or an attacker
+		// who saw the URL) race to the callback, the second must be rejected
+		// instead of exchanging the same `code` twice. The used-state cache is
+		// pre-seeded at /connect time (see loginURLForUser); Consume uses
+		// load-and-delete, so exactly one presenter can redeem it atomically.
 		oauthStateCache.Delete(state)
+		if _, ok := oauthStateUsed.Consume(state); !ok {
+			slog.Warn("OAuth callback rejected: state already used")
+			http.Error(w, "Invalid or expired state. Please return to Telegram and run /connect again.", http.StatusBadRequest)
+			return
+		}
 
 		// Do the (slow) GitHub exchange + DB write in the background so we return a
 		// fast 200 to the browser. The request context is cancelled when we return,
@@ -387,6 +398,7 @@ func run() (runErr error) {
 			case <-ticker.C:
 				database.ChatReposCache.Cleanup()
 				oauthStateCache.Cleanup()
+				oauthStateUsed.Cleanup()
 				contextCache.Cleanup()
 				actionCache.Cleanup()
 				searchCache.Cleanup()

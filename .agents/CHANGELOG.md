@@ -31,6 +31,23 @@ All notable changes to TG-GithubBot. Format loosely follows Keep a Changelog.
 ### Fixed
 - (baseline e179653) 16 audit issues, markdown→HTML migration, low-priority
   polish. See git history for details.
+- **Admin-cache key collision**: `adminCacheKey` packed `chatID` and `userID`
+  with `<<32 |`, which deterministically collided for Telegram's wide 64-bit
+  (often negative) group/user IDs — could leak admin status across users.
+  Now FNV-1a-hashes both IDs; `IsAdmin` results are keyed correctly.
+- **OAuth state replay**: `/oauth/callback` swapped a non-atomic
+  `stateCache.Delete` for a single-use atomic gate. A `state` issued at
+  `/connect` can now be redeemed exactly once; concurrent or replayed
+  callbacks are rejected instead of double-exchanging the `code`.
+- **Repo-search cache key**: pending `/addrepo` search prompts were keyed by
+  Telegram message ID alone, which is only unique per chat — two chats could
+  collide and consume each other's prompt. Keys are now `chatID:messageID`.
+- **Corrupted PR action button labels**: replacement characters (U+FFFD) in
+  the Merge/Close buttons rendered as garbage; restored proper icons.
+- **`isMarkdownParseError` over-matching**: broad `button`/`markup`/`entities`
+  substring checks misclassified unrelated 400s (e.g. `BUTTON_DATA_INVALID`)
+  as markdown failures and hid the real error behind a plain-text retry.
+  Tightened to concrete parse/markup signatures.
 
 ### Deferred
 - Phase 6 digests (require an event storage layer that does not exist yet).

@@ -541,8 +541,8 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 
 	row := ui.Row(
 		ui.Callback("✅ Approve", "act:approve:"+id, ui.WithStyle(ui.StyleSuccess)),
-		ui.Callback("� Merge", "act:merge:"+id, ui.WithStyle(ui.StyleSuccess)),
-		ui.Callback("�🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
+		ui.Callback("🔀 Merge", "act:merge:"+id, ui.WithStyle(ui.StyleSuccess)),
+		ui.Callback("🔒 Close", "act:close:"+id, ui.WithStyle(ui.StyleDanger)),
 	)
 
 	if markup == nil {
@@ -559,11 +559,16 @@ func isMarkdownParseError(err error) bool {
 		return false
 	}
 	d := strings.ToLower(te.Description)
+	// Match only parse/markup failures. Generic "button"/"entities" substrings
+	// would misclassify unrelated 400s (e.g. "BUTTON_DATA_INVALID") and hide
+	// the real error behind a pointless plain-text retry.
 	return strings.Contains(d, "can't parse") ||
 		strings.Contains(d, "parse entities") ||
-		strings.Contains(d, "entities") ||
-		strings.Contains(d, "button") ||
-		strings.Contains(d, "markup")
+		strings.Contains(d, "can't find entities") ||
+		strings.Contains(d, "bad request: message text is empty") ||
+		strings.Contains(d, "message markup") ||
+		strings.Contains(d, "button_markup_invalid") ||
+		strings.Contains(d, "button_data_invalid")
 }
 
 // normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2

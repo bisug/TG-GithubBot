@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"encoding/binary"
+	"hash/fnv"
 	"log/slog"
 	"sync"
 	"time"
@@ -20,12 +22,20 @@ type adminResult struct {
 
 var (
 	adminMu    sync.RWMutex
-	adminCache = map[int64]adminResult{} // key: chatID<<32 | userID (both fit in int64)
+	adminCache = map[int64]adminResult{} // key: FNV-1a hash of (chatID, userID)
 )
 
 // adminCacheKey packs chat and user IDs into a single int64 map key.
+// Telegram group/channel IDs and user IDs are negative and exceed 32 bits,
+// so naive (chatID<<32 | userID) packing collides. We hash both IDs with
+// FNV-1a instead, which is collision-resistant enough for a short-TTL cache.
 func adminCacheKey(chatID, userID int64) int64 {
-	return chatID<<32 | userID
+	var buf [16]byte
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(chatID))
+	binary.LittleEndian.PutUint64(buf[8:16], uint64(userID))
+	sum := fnv.New64a()
+	_, _ = sum.Write(buf[:])
+	return int64(sum.Sum64())
 }
 
 // CleanupAdminCache sweeps expired admin entries so the map does not grow

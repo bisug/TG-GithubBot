@@ -5,6 +5,42 @@ import (
 	"testing"
 )
 
+// TestAdminCacheKeyDistinct verifies that distinct (chat, user) pairs map to
+// distinct cache keys. The old chatID<<32|userID packing collided for the wide
+// 64-bit (often negative) IDs Telegram actually uses.
+func TestAdminCacheKeyDistinct(t *testing.T) {
+	// Realistic Telegram IDs: group chats are negative and can exceed 32 bits.
+	pairs := []struct{ chat, user int64 }{
+		{chat: -100123456789, user: 123456789},
+		{chat: -100123456789, user: -9876543212345},
+		{chat: -100987654321, user: 123456789},
+		{chat: 123456789,     user: -100123456789},
+		{chat: 8539254782,    user: 2147483648},
+		{chat: 2147483648,    user: 8539254782},
+		{chat: 42,            user: 7},
+		{chat: 6,             user: 49},
+	}
+	keys := make([]int64, len(pairs))
+	for i, p := range pairs {
+		keys[i] = adminCacheKey(p.chat, p.user)
+	}
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[i] == keys[j] {
+				t.Fatalf("adminCacheKey collision for distinct pairs %v vs %v", pairs[i], pairs[j])
+			}
+		}
+	}
+}
+
+// TestAdminCacheKeyStable verifies the same pair yields the same key every call
+// (so cache lookups are consistent).
+func TestAdminCacheKeyStable(t *testing.T) {
+	if adminCacheKey(-100123456789, 123456789) != adminCacheKey(-100123456789, 123456789) {
+		t.Fatal("adminCacheKey must be deterministic")
+	}
+}
+
 func TestEncryptDecrypt(t *testing.T) {
 	tests := []struct {
 		name      string

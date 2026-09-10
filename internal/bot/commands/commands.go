@@ -30,6 +30,9 @@ type CommandHandler struct {
 	DB            *db.DB
 	OAuth         *gh.OAuth
 	StateCache    *cache.Cache[string, int64]
+	// UsedStateCache tracks OAuth states that have been issued so the callback
+	// can atomically claim them (single-use) and reject replays.
+	UsedStateCache *cache.Cache[string, struct{}]
 	ClientFactory *gh.ClientFactory
 	EncryptionKey string
 	ContextCache  *cache.Cache[string, models.MessageContext]
@@ -38,16 +41,17 @@ type CommandHandler struct {
 	SearchCache *cache.Cache[string, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], usedStateCache *cache.Cache[string, struct{}], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
 	return &CommandHandler{
-		Config:        cfg,
-		DB:            database,
-		OAuth:         oauth,
-		StateCache:    stateCache,
-		ClientFactory: factory,
-		EncryptionKey: key,
-		ContextCache:  ctxCache,
-		SearchCache:   searchCache,
+		Config:         cfg,
+		DB:             database,
+		OAuth:          oauth,
+		StateCache:     stateCache,
+		UsedStateCache: usedStateCache,
+		ClientFactory:  factory,
+		EncryptionKey:  key,
+		ContextCache:   ctxCache,
+		SearchCache:    searchCache,
 	}
 }
 
@@ -111,6 +115,11 @@ func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
 	}
 
 	h.StateCache.Set(state, userID, 10*time.Minute)
+	if h.UsedStateCache != nil {
+		// Pre-seed the single-use claim set so the callback can atomically
+		// redeem the state exactly once (and reject concurrent/sequential replays).
+		h.UsedStateCache.Set(state, struct{}{}, 10*time.Minute)
+	}
 	return h.OAuth.GetLoginURL(state), nil
 }
 
@@ -269,6 +278,12 @@ func (h *CommandHandler) listUserRepos(b *gotgbot.Bot, ctx *ext.Context) error {
 	return h.sendRepoList(b, ctx, 1)
 }
 
+// searchCacheKey scopes a pending search prompt by chat, because Telegram
+// message IDs are only unique per chat: two chats can share the same ID.
+func searchCacheKey(chatID, messageID int64) string {
+	return strconv.FormatInt(chatID, 10) + ":" + strconv.FormatInt(messageID, 10)
+}
+
 // PromptRepoSearch sends a ForceReply message asking for a search query and
 // records it in SearchCache so the reply handler can pick it up.
 func (h *CommandHandler) PromptRepoSearch(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -278,7 +293,7 @@ func (h *CommandHandler) PromptRepoSearch(b *gotgbot.Bot, ctx *ext.Context) erro
 	if err != nil {
 		return err
 	}
-	h.SearchCache.Set(strconv.FormatInt(sent.MessageId, 10), ctx.EffectiveChat.Id, 10*time.Minute)
+	h.SearchCache.Set(searchCacheKey(ctx.EffectiveChat.Id, sent.MessageId), ctx.EffectiveChat.Id, 10*time.Minute)
 	return nil
 }
 
@@ -290,7 +305,7 @@ func (h *CommandHandler) HandleRepoSearchReply(b *gotgbot.Bot, ctx *ext.Context)
 		return false
 	}
 
-	key := strconv.FormatInt(msg.ReplyToMessage.MessageId, 10)
+	key := searchCacheKey(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	chatID, ok := h.SearchCache.Get(key)
 	if !ok || chatID != ctx.EffectiveChat.Id {
 		return false
