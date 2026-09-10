@@ -167,12 +167,9 @@ func RepoPageNav(page int, resp *gh.Response, pageData func(int) string) []gotgb
 // CompactButtonText truncates a button label to Telegram-friendly length with an ellipsis.
 func CompactButtonText(name string) string {
 	const max = 42
-	if len(name) <= max {
+	runes := []rune(name)
+	if len(runes) <= max {
 		return name
 	}
-	truncated := []rune(name)
-	if len(truncated) <= max {
-		return name
-	}
-	return string(truncated[:max-1]) + "…"
+	return string(runes[:max-1]) + "…"
 }

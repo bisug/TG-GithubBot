@@ -330,30 +330,15 @@ func run() (runErr error) {
 			slog.Info("Successfully deleted existing webhook before starting polling")
 		}
 
-		go func() {
-			for {
-				err := updater.StartPolling(b, &ext.PollingOpts{
-					DropPendingUpdates: true,
-					GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
-						Timeout: 9,
-						RequestOpts: &gotgbot.RequestOpts{
-							Timeout: time.Second * 10,
-						},
-					},
-				})
-				if err != nil {
-					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
-						slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
-						time.Sleep(2 * time.Second)
-						continue
-					}
-					slog.Error("Polling failed; retrying in 5s", "error", err)
-					time.Sleep(5 * time.Second)
-					continue
-				}
-				break
-			}
-		}()
+		runPollingLoop(b, updater, "Polling failed", &ext.PollingOpts{
+			DropPendingUpdates: true,
+			GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
+				Timeout: 9,
+				RequestOpts: &gotgbot.RequestOpts{
+					Timeout: time.Second * 10,
+				},
+			},
+		})
 		slog.Info("Bot started using polling", "bot", b.User.Username)
 	} else {
 		webhookBase := strings.TrimRight(cfg.TelegramWebhookURL, "/")
@@ -378,21 +363,7 @@ func run() (runErr error) {
 			} else if ok {
 				slog.Info("Deleted existing webhook before polling fallback")
 			}
-			go func() {
-				for {
-					err := updater.StartPolling(b, &ext.PollingOpts{DropPendingUpdates: true})
-					if err == nil {
-						return
-					}
-					if strings.Contains(err.Error(), "terminated by other getUpdates request") {
-						slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
-						time.Sleep(2 * time.Second)
-						continue
-					}
-					slog.Error("Polling fallback failed; retrying in 5s", "error", err)
-					time.Sleep(5 * time.Second)
-				}
-			}()
+			runPollingLoop(b, updater, "Polling fallback failed", &ext.PollingOpts{DropPendingUpdates: true})
 		} else {
 			slog.Info("Bot successfully registered webhook at Telegram", "url", webhookBase+"/bot<redacted>")
 		}
@@ -490,6 +461,28 @@ func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, da
 	}
 
 	return errors.Join(errs...)
+}
+
+// runPollingLoop starts Telegram polling in a background goroutine and retries
+// forever with backoff, treating the "terminated by other getUpdates request"
+// conflict as an expected deploy race. failureLog prefixes the retry error
+// message so each call site keeps its distinct log text.
+func runPollingLoop(b *gotgbot.Bot, updater *ext.Updater, failureLog string, opts *ext.PollingOpts) {
+	go func() {
+		for {
+			err := updater.StartPolling(b, opts)
+			if err == nil {
+				return
+			}
+			if strings.Contains(err.Error(), "terminated by other getUpdates request") {
+				slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			slog.Error(failureLog+"; retrying in 5s", "error", err)
+			time.Sleep(5 * time.Second)
+		}
+	}()
 }
 
 func resolveOAuthState(state string, stateCache *cache.Cache[string, int64], encryptionKey string) (int64, error) {

@@ -27,6 +27,37 @@ All notable changes to TG-GithubBot. Format loosely follows Keep a Changelog.
 ### Changed
 - Repo picker page size 5 → 10 to match `/repos` listing.
 - `/repos` renders repository names as links with link previews disabled.
+- **Admin check cache**: replaced the hand-rolled FNV-hashed `int64` cache
+  (custom mutex + manual TTL sweep) with the shared `cache.Cache` keyed by a
+  `{chatID, userID}` struct — eliminates packing collisions by construction
+  and drops ~40 lines of bespoke machinery.
+- **Repo-link lookups**: `GetRepoLink` / `GetRepoLinkByWebhookID` share one
+  `findLink` scan; `UpdateRepoLinkName` evicts the cached links instead of
+  hand-mutating the copy (readers repopulate from Mongo — no stale window).
+- **GitHub error classification**: the 401 / 403-"bad credentials" token-death
+  check and the 404 webhook check are now shared `github.IsInvalidTokenError`
+  / `github.IsNotFoundError` helpers used by both commands and callbacks.
+- **Command preambles**: `/approve`, `/merge`, `/close`, `/reopen` share a
+  single `replyActionTarget` validation helper; the duplicated
+  `lookupMessageContext` in `reply_handler.go` and `commands.go` is one
+  function.
+- **Callback data**: the `"*"` wildcard expansion and per-event toggle logic
+  are shared helpers (`expandWildcardEvents`, `toggleEvent`); the enabled
+  counter is counted in the render loop instead of a second pass.
+- **Polling retry loops**: the two near-identical getUpdates retry loops in
+  `main.go` share `runPollingLoop`.
+- **Event formatters**: 7 repeated "escape each entry then join" loops use a
+  generic `joinFormatted`; the four anonymous action-map + fallback dances
+  (Member/Repository/Release/Team) use a named `actionInfo` lookup helper;
+  `FormatRepositoryEvent("renamed")` no longer double-escapes the repo name
+  that `FormatRepo` already escapes.
+- **Webhook test/ping hooks**: `TriggerRepositoryHookTest`/`Ping` return the
+  library error directly instead of the `if err != nil { return err }` dance.
+- **Repo search reply**: consumes the pending-search entry atomically via
+  `cache.Consume` (the `chatID != ctx.EffectiveChat.Id` re-check was
+  tautological — the key already embeds the chat).
+- **Chat upsert debounce**: uses atomic `cache.AddIfAbsent` instead of a
+  check-then-set race window.
 
 ### Fixed
 - (baseline e179653) 16 audit issues, markdown→HTML migration, low-priority

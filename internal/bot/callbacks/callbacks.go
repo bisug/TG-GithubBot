@@ -108,6 +108,43 @@ func cbAddRepoID(repoID int64) string {
 	return cb(cbPrefixSettings, cbAddRepo, "id", strconv.FormatInt(repoID, 10))
 }
 
+// expandWildcardEvents replaces the "*" wildcard with every supported event so
+// individual toggles can be rendered and edited against concrete events.
+// Returns the expanded list and whether a wildcard was present.
+func expandWildcardEvents(events []string) ([]string, bool) {
+	expanded := false
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		if e == "*" {
+			expanded = true
+			for _, se := range github.SupportedEvents {
+				out = append(out, se.Name)
+			}
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, expanded
+}
+
+// toggleEvent removes evt from events when present (turning it off), otherwise
+// appends it (turning it on).
+func toggleEvent(events []string, evt string) []string {
+	newEvents := make([]string, 0, len(events)+1)
+	found := false
+	for _, e := range events {
+		if e == evt {
+			found = true
+			continue
+		}
+		newEvents = append(newEvents, e)
+	}
+	if !found {
+		newEvents = append(newEvents, evt)
+	}
+	return newEvents
+}
+
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can change settings", ShowAlert: true})
@@ -189,31 +226,9 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			hook, _, ok := h.setHookEvents(b, ctx, link, func(events []string) []string {
 				// Expand the "*" wildcard so individual toggles are visible
 				// and editable against concrete events.
-				var currentEvents []string
-				for _, e := range events {
-					if e == "*" {
-						expanded = true
-						for _, se := range github.SupportedEvents {
-							currentEvents = append(currentEvents, se.Name)
-						}
-						break
-					}
-					currentEvents = append(currentEvents, e)
-				}
-
-				found := false
-				var newEvents []string
-				for _, e := range currentEvents {
-					if e == evt {
-						found = true
-					} else {
-						newEvents = append(newEvents, e)
-					}
-				}
-				if !found {
-					newEvents = append(newEvents, evt)
-				}
-				return newEvents
+				currentEvents, wasExpanded := expandWildcardEvents(events)
+				expanded = expanded || wasExpanded
+				return toggleEvent(currentEvents, evt)
 			})
 			if !ok {
 				return nil
@@ -400,7 +415,7 @@ func (h *CallbackHandler) setHookEvents(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		}
 		slog.Error("Failed to update GitHub webhook", "repo", l.RepoFullName, "hook_id", l.WebhookID, "chat", ctx.EffectiveChat.Id, "error", editErr)
 		text := "Failed to update GitHub. Check that your connected account has Admin access to the repo."
-		if isNotFoundErr(editErr) {
+		if github.IsNotFoundError(editErr) {
 			text = "Failed to update GitHub. The webhook may have been removed, or your account lacks Admin access to the repo."
 		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text, ShowAlert: true})
@@ -538,13 +553,8 @@ func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Contex
 
 	enabledEvents := make(map[string]bool)
 	if hook != nil {
-		for _, e := range hook.Events {
-			if e == "*" {
-				for _, supported := range github.SupportedEvents {
-					enabledEvents[supported.Name] = true
-				}
-				break
-			}
+		events, _ := expandWildcardEvents(hook.Events)
+		for _, e := range events {
 			enabledEvents[e] = true
 		}
 	}
@@ -552,19 +562,18 @@ func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Contex
 	var kb [][]gotgbot.InlineKeyboardButton
 	var row []gotgbot.InlineKeyboardButton
 
+	enabledCount := 0
 	for _, e := range github.SupportedEvents {
 		status := "❌"
+		style := ui.StyleDanger
 		if enabledEvents[e.Name] {
 			status = "✅"
+			style = ui.StyleSuccess
+			enabledCount++
 		}
 
 		cbData := cbRepo(cbToggleEvent, l, e.Short, strconv.Itoa(page))
 		btnText := fmt.Sprintf("%s %s", status, e.Label)
-
-		style := ui.StyleDanger
-		if enabledEvents[e.Name] {
-			style = ui.StyleSuccess
-		}
 
 		row = append(row, ui.Callback(btnText, cbData, ui.WithStyle(style)))
 
@@ -578,12 +587,6 @@ func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Contex
 	}
 
 	// Bulk actions: one tap instead of toggling every event individually.
-	enabledCount := 0
-	for _, e := range github.SupportedEvents {
-		if enabledEvents[e.Name] {
-			enabledCount++
-		}
-	}
 	bulkRow := []gotgbot.InlineKeyboardButton{
 		ui.Callback("✅ Enable all", cbRepo(cbBulkEvents, l, "all"), ui.WithStyle(ui.StyleSuccess)),
 		ui.Callback("🔕 Mute all", cbRepo(cbBulkEvents, l, "mute"), ui.WithStyle(ui.StyleDanger)),
@@ -909,31 +912,10 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 }
 
 func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	var errResp *gh.ErrorResponse
-	if errors.As(err, &errResp) {
-		// 401 always means the token is dead. 403 is ambiguous (revoked token,
-		// permission denial, rate limit) — only clear the token when GitHub
-		// explicitly says the credentials are bad.
-		if errResp.Response.StatusCode == http.StatusUnauthorized {
-			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
-			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
-			return true
-		}
-		if errResp.Response.StatusCode == http.StatusForbidden &&
-			strings.Contains(strings.ToLower(errResp.Message), "bad credentials") {
-			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
-			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
-			return true
-		}
+	if github.IsInvalidTokenError(err) {
+		_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
+		return true
 	}
 	return false
-}
-
-// isNotFoundErr reports whether err is a GitHub 404 API response. GitHub returns
-// 404 both when the resource truly does not exist and, deliberately, when the
-// connected account lacks permission to see/manage it (e.g. editing a webhook on
-// a repo the account is not an admin of).
-func isNotFoundErr(err error) bool {
-	var errResp *gh.ErrorResponse
-	return errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound
 }

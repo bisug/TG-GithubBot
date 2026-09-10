@@ -298,36 +298,37 @@ func (d *DB) GetChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink,
 	return chat.Links, nil
 }
 
-// GetRepoLink returns a specific repository link for a chat
-func (d *DB) GetRepoLink(ctx context.Context, chatID int64, repoFullName string) (*models.RepoLink, error) {
+// findLink scans the chat's cached links for the first one matching match.
+// Returns a copy of the link (never a pointer into the cached slice, which
+// callers could mutate) or ErrLinkNotFound.
+func (d *DB) findLink(ctx context.Context, chatID int64, match func(models.RepoLink) bool) (*models.RepoLink, error) {
 	links, err := d.GetChatLinks(ctx, chatID)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, link := range links {
-		if link.RepoFullName == repoFullName {
-			return &link, nil
+		if match(link) {
+			found := link
+			return &found, nil
 		}
 	}
 
 	return nil, ErrLinkNotFound
 }
 
+// GetRepoLink returns a specific repository link for a chat
+func (d *DB) GetRepoLink(ctx context.Context, chatID int64, repoFullName string) (*models.RepoLink, error) {
+	return d.findLink(ctx, chatID, func(l models.RepoLink) bool {
+		return l.RepoFullName == repoFullName
+	})
+}
+
 // GetRepoLinkByWebhookID returns a specific repository link by webhook ID
 func (d *DB) GetRepoLinkByWebhookID(ctx context.Context, chatID int64, webhookID int64) (*models.RepoLink, error) {
-	links, err := d.GetChatLinks(ctx, chatID)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, link := range links {
-		if link.WebhookID == webhookID {
-			return &link, nil
-		}
-	}
-
-	return nil, ErrLinkNotFound
+	return d.findLink(ctx, chatID, func(l models.RepoLink) bool {
+		return l.WebhookID == webhookID
+	})
 }
 
 // UpdateRepoLinkName updates the repository name for a given webhook ID in a chat
@@ -349,25 +350,7 @@ func (d *DB) UpdateRepoLinkName(ctx context.Context, chatID int64, webhookID int
 		return errors.New("no matching link found to update")
 	}
 
-	if cachedLinks, ok := d.ChatReposCache.Get(chatID); ok {
-		newLinks := make([]models.RepoLink, len(cachedLinks))
-		copy(newLinks, cachedLinks)
-
-		updated := false
-		for i, link := range newLinks {
-			if link.WebhookID == webhookID {
-				newLinks[i].RepoFullName = newRepoFullName
-				updated = true
-				break
-			}
-		}
-
-		if updated {
-			d.ChatReposCache.Set(chatID, newLinks, 30*time.Minute)
-		} else {
-			d.ChatReposCache.Delete(chatID)
-		}
-	}
-
+	// Evict the cached links; the next read repopulates from the database.
+	d.ChatReposCache.Delete(chatID)
 	return nil
 }

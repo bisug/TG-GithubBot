@@ -42,17 +42,11 @@ func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboa
 	case "reopened":
 		msg += "<i>Issue reopened</i>\n"
 	case "assigned":
-		var assignees []string
-		for _, a := range issue.Assignees {
-			assignees = append(assignees, EscapeHTML(a.GetLogin()))
-		}
-		msg += fmt.Sprintf("<b>Assigned to:</b> %s\n", strings.Join(assignees, ", "))
+		msg += fmt.Sprintf("<b>Assigned to:</b> %s\n",
+			joinFormatted(issue.Assignees, func(a *github.User) string { return EscapeHTML(a.GetLogin()) }, ", "))
 	case "labeled":
-		var labels []string
-		for _, l := range issue.Labels {
-			labels = append(labels, EscapeHTML(l.GetName()))
-		}
-		msg += fmt.Sprintf("<b>Labels:</b> %s\n", strings.Join(labels, ", "))
+		msg += fmt.Sprintf("<b>Labels:</b> %s\n",
+			joinFormatted(issue.Labels, func(l *github.Label) string { return EscapeHTML(l.GetName()) }, ", "))
 	case "milestoned":
 		if m := issue.GetMilestone(); m != nil {
 			msg += fmt.Sprintf("<b>Milestone:</b> %s\n", EscapeHTML(m.GetTitle()))
@@ -98,23 +92,14 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 	case "edited":
 		msg += fmt.Sprintf("✏️ Edited\n<b>Description:</b>\n%s\n", FormatTextWithMarkdown(pr.GetBody()))
 	case "assigned":
-		var assignees []string
-		for _, a := range pr.Assignees {
-			assignees = append(assignees, EscapeHTML(a.GetLogin()))
-		}
-		msg += fmt.Sprintf("<b>Assigned:</b> %s\n", strings.Join(assignees, ", "))
+		msg += fmt.Sprintf("<b>Assigned:</b> %s\n",
+			joinFormatted(pr.Assignees, func(a *github.User) string { return EscapeHTML(a.GetLogin()) }, ", "))
 	case "review_requested":
-		var reviewers []string
-		for _, r := range pr.RequestedReviewers {
-			reviewers = append(reviewers, EscapeHTML(r.GetLogin()))
-		}
-		msg += fmt.Sprintf("<b>Reviewers:</b> %s\n", strings.Join(reviewers, ", "))
+		msg += fmt.Sprintf("<b>Reviewers:</b> %s\n",
+			joinFormatted(pr.RequestedReviewers, func(r *github.User) string { return EscapeHTML(r.GetLogin()) }, ", "))
 	case "labeled":
-		var labels []string
-		for _, l := range pr.Labels {
-			labels = append(labels, EscapeHTML(l.GetName()))
-		}
-		msg += fmt.Sprintf("<b>Labels:</b> %s\n", strings.Join(labels, ", "))
+		msg += fmt.Sprintf("<b>Labels:</b> %s\n",
+			joinFormatted(pr.Labels, func(l *github.Label) string { return EscapeHTML(l.GetName()) }, ", "))
 	case "synchronize":
 		msg += "🔄 New commits pushed\n"
 	}
@@ -273,6 +258,31 @@ func pluralSuffix(count int) string {
 func emojiOr(m map[string]string, key, fallback string) string {
 	if e, ok := m[key]; ok && e != "" {
 		return e
+	}
+	return fallback
+}
+
+// joinFormatted maps items through format and joins the results with sep.
+// Shared by the formatters' repeated "escape each entry then join" patterns.
+func joinFormatted[T any](items []T, format func(T) string, sep string) string {
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		parts = append(parts, format(it))
+	}
+	return strings.Join(parts, sep)
+}
+
+// actionInfo pairs an emoji with a short description for action lookup tables.
+type actionInfo struct {
+	emoji string
+	text  string
+}
+
+// lookupActionInfo returns the table entry for action, or fallback when the
+// action is unknown.
+func lookupActionInfo(action string, table map[string]actionInfo, fallback actionInfo) actionInfo {
+	if info, ok := table[action]; ok {
+		return info
 	}
 	return fallback
 }
@@ -443,28 +453,18 @@ func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboa
 	repo := event.Repo.GetFullName()
 	sender := event.Sender.GetLogin()
 
-	actionInfo := map[string]struct {
-		emoji string
-		verb  string
-	}{
+	info := lookupActionInfo(action, map[string]actionInfo{
 		"added":   {"➕", "added to"},
 		"removed": {"➖", "removed from"},
 		"edited":  {"✏️", "updated in"},
-	}[action]
-
-	if actionInfo.emoji == "" {
-		actionInfo = struct {
-			emoji string
-			verb  string
-		}{"⚠️", "performed action on"}
-	}
+	}, actionInfo{"⚠️", "performed action on"})
 
 	msg := fmt.Sprintf(
 		"%s <b>%s</b> %s <b>%s</b>\n\n"+
 			"<b>By:</b> %s",
-		actionInfo.emoji,
+		info.emoji,
 		FormatUser(member),
-		EscapeHTML(actionInfo.verb),
+		EscapeHTML(info.text),
 		FormatRepo(repo),
 		FormatUser(sender),
 	)
@@ -491,29 +491,19 @@ func FormatRepositoryEvent(event *github.RepositoryEvent) (string, *gotgbot.Inli
 	url := event.Repo.GetHTMLURL()
 	sender := event.Sender.GetLogin()
 
-	actionDetails := map[string]struct {
-		emoji string
-		desc  string
-	}{
+	info := lookupActionInfo(action, map[string]actionInfo{
 		"created":    {"🎉", "created"},
-		"renamed":    {"🔄", fmt.Sprintf("renamed to %s", EscapeHTML(event.Repo.GetName()))},
+		"renamed":    {"🔄", "renamed to " + event.Repo.GetName()},
 		"archived":   {"🔒", "archived"},
 		"unarchived": {"🔓", "unarchived"},
-	}[action]
-
-	if actionDetails.emoji == "" {
-		actionDetails = struct {
-			emoji string
-			desc  string
-		}{"⚠️", fmt.Sprintf("performed %s action", action)}
-	}
+	}, actionInfo{"⚠️", fmt.Sprintf("performed %s action", action)})
 
 	msg := fmt.Sprintf(
 		"%s %s %s\n\n"+
 			"👤 <b>By:</b> %s",
-		actionDetails.emoji,
+		info.emoji,
 		FormatRepo(repo),
-		EscapeHTML(actionDetails.desc),
+		EscapeHTML(info.text),
 		FormatUser(sender),
 	)
 	return FormatMessageWithButton(msg, "View Repository", url)
@@ -525,29 +515,19 @@ func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotgbot.InlineKeyb
 	repo := event.GetRepo().GetFullName()
 	sender := event.GetSender().GetLogin()
 
-	actionDetails := map[string]struct {
-		emoji string
-		verb  string
-	}{
+	info := lookupActionInfo(action, map[string]actionInfo{
 		"created":   {"🎉", "New release"},
 		"published": {"🚀", "Release published"},
 		"deleted":   {"🗑️", "Release deleted"},
 		"edited":    {"✏️", "Release edited"},
-	}[action]
-
-	if actionDetails.emoji == "" {
-		actionDetails = struct {
-			emoji string
-			verb  string
-		}{"⚠️", fmt.Sprintf("Unknown action (%s)", action)}
-	}
+	}, actionInfo{"⚠️", fmt.Sprintf("Unknown action (%s)", action)})
 
 	msg := fmt.Sprintf(
 		"%s <b>%s in</b> %s\n\n"+
 			"<b>Tag:</b> %s\n"+
 			"<b>By:</b> %s",
-		actionDetails.emoji,
-		EscapeHTML(actionDetails.verb),
+		info.emoji,
+		EscapeHTML(info.text),
 		FormatRepo(repo),
 		EscapeHTML(release.GetTagName()),
 		FormatUser(sender),
@@ -783,29 +763,19 @@ func FormatTeamEvent(e *github.TeamEvent) (string, *gotgbot.InlineKeyboardMarkup
 	org := e.GetOrg().GetLogin()
 	sender := e.GetSender().GetLogin()
 
-	actionInfo := map[string]struct {
-		emoji string
-		verb  string
-	}{
+	info := lookupActionInfo(action, map[string]actionInfo{
 		"created": {"🆕", "created"},
 		"edited":  {"✏️", "modified"},
 		"deleted": {"🗑️", "deleted"},
-	}[action]
-
-	if actionInfo.emoji == "" {
-		actionInfo = struct {
-			emoji string
-			verb  string
-		}{"⚙️", action}
-	}
+	}, actionInfo{"⚙️", action})
 
 	msg := fmt.Sprintf(
 		"%s <b>Team %s</b>\n\n"+
 			"<b>Name:</b> %s\n"+
 			"<b>Org:</b> %s\n"+
 			"<b>By:</b> %s",
-		actionInfo.emoji,
-		EscapeHTML(actionInfo.verb),
+		info.emoji,
+		EscapeHTML(info.text),
 		EscapeHTML(team),
 		EscapeHTML(org),
 		FormatUser(sender),
@@ -1272,18 +1242,12 @@ func FormatInstallationRepositoriesEvent(e *github.InstallationRepositoriesEvent
 		FormatUser(sender.GetLogin()),
 	)
 	if len(reposAdded) > 0 {
-		var repoNames []string
-		for _, r := range reposAdded {
-			repoNames = append(repoNames, FormatRepo(r.GetFullName()))
-		}
-		msg += fmt.Sprintf("<b>Repositories Added:</b>\n%s\n", strings.Join(repoNames, "\n"))
+		msg += fmt.Sprintf("<b>Repositories Added:</b>\n%s\n",
+			joinFormatted(reposAdded, func(r *github.Repository) string { return FormatRepo(r.GetFullName()) }, "\n"))
 	}
 	if len(reposRemoved) > 0 {
-		var repoNames []string
-		for _, r := range reposRemoved {
-			repoNames = append(repoNames, FormatRepo(r.GetFullName()))
-		}
-		msg += fmt.Sprintf("<b>Repositories Removed:</b>\n%s\n", strings.Join(repoNames, "\n"))
+		msg += fmt.Sprintf("<b>Repositories Removed:</b>\n%s\n",
+			joinFormatted(reposRemoved, func(r *github.Repository) string { return FormatRepo(r.GetFullName()) }, "\n"))
 	}
 
 	return FormatMessageWithButton(msg, "View Installation", e.GetInstallation().GetHTMLURL())

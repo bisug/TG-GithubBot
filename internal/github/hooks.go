@@ -11,24 +11,14 @@ func TriggerRepositoryHookTest(ctx context.Context, client *gh.Client, owner, re
 	if hookID == 0 {
 		return fmt.Errorf("missing webhook id")
 	}
-
 	_, err := client.Repositories.TestHook(ctx, owner, repo, hookID)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func TriggerRepositoryHookPing(ctx context.Context, client *gh.Client, owner, repo string, hookID int64) error {
 	if hookID == 0 {
 		return fmt.Errorf("missing webhook id")
 	}
-
 	_, err := client.Repositories.PingHook(ctx, owner, repo, hookID)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }

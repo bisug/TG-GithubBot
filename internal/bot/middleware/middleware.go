@@ -35,10 +35,9 @@ func TrackUserAndChat(database *db.DB) func(b *gotgbot.Bot, ctx *ext.Context) er
 				dbChat.Title = ctx.EffectiveChat.Username
 			}
 
-			if _, seen := chatUpsertSeen.Get(ctx.EffectiveChat.Id); seen {
+			if !chatUpsertSeen.AddIfAbsent(ctx.EffectiveChat.Id, struct{}{}, 10*time.Minute) {
 				return nil
 			}
-			chatUpsertSeen.Set(ctx.EffectiveChat.Id, struct{}{}, 10*time.Minute)
 
 			go func() {
 				_ = database.UpsertChat(context.Background(), dbChat)

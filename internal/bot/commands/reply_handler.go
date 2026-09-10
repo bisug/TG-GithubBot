@@ -3,10 +3,8 @@ package commands
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github-webhook/internal/cache"
 	"github-webhook/internal/db"
@@ -48,7 +46,7 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	mContext, found := lookupMessageContext(h.ContextCache, h.DB, ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	if !found {
 		return nil
 	}
@@ -93,22 +91,4 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = msg.Reply(b, "💬 Comment posted on GitHub.", nil)
 	}
 	return nil
-}
-
-// lookupMessageContext resolves the GitHub context for a notification message:
-// in-memory cache first, then Mongo (so replies survive restarts).
-func (h *ReplyHandler) lookupMessageContext(chatID, messageID int64) (models.MessageContext, bool) {
-	key := fmt.Sprintf("%d:%d", chatID, messageID)
-	if mc, ok := h.ContextCache.Get(key); ok {
-		return mc, true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	mc, err := h.DB.GetMessageContext(ctx, chatID, messageID)
-	if err != nil {
-		return models.MessageContext{}, false
-	}
-	// Re-populate the hot cache for subsequent lookups.
-	h.ContextCache.Set(key, mc, 48*time.Hour)
-	return mc, true
 }

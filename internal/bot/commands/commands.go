@@ -18,7 +18,6 @@ import (
 	"github-webhook/internal/utils"
 
 	"html"
-	"net/http"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -196,8 +195,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, getErr) {
 			return nil
 		}
-		var errResp *github.ErrorResponse
-		if errors.As(getErr, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		if gh.IsNotFoundError(getErr) {
 			_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			return nil
 		}
@@ -205,7 +203,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	token, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
+	token, encErr := utils.Encrypt(strconv.FormatInt(ctx.EffectiveChat.Id, 10), h.EncryptionKey)
 	if encErr != nil {
 		_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Error generating webhook token.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
@@ -230,8 +228,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, hookErr) {
 			return nil
 		}
-		var errResp *github.ErrorResponse
-		if errors.As(hookErr, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		if gh.IsNotFoundError(hookErr) {
 			safeRepoName := html.EscapeString(repoFullName)
 			msg := fmt.Sprintf("❌ <b>Insufficient permissions.</b>\nYou need admin access to repository <b>%s</b> to create webhooks.", safeRepoName)
 			_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -309,11 +306,11 @@ func (h *CommandHandler) HandleRepoSearchReply(b *gotgbot.Bot, ctx *ext.Context)
 	}
 
 	key := searchCacheKey(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
-	chatID, ok := h.SearchCache.Get(key)
-	if !ok || chatID != ctx.EffectiveChat.Id {
+	// Consume the prompt atomically: a replayed reply cannot trigger a second
+	// search, and the entry is removed either way.
+	if _, ok := h.SearchCache.Consume(key); !ok {
 		return false
 	}
-	h.SearchCache.Delete(key)
 
 	query := strings.ToLower(strings.TrimSpace(msg.GetText()))
 	if query == "" {
@@ -463,29 +460,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	var webhookStatusMsg string
 
 	if link.WebhookID != 0 {
-		client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
-		if err != nil {
-			if errors.Is(err, gh.ErrUnauthorized) {
-				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
-			} else {
-				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
-			}
-		} else {
-			owner, repo, ok := strings.Cut(repoFullName, "/")
-			if ok && owner != "" && repo != "" {
-				_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
-				if err != nil {
-					if h.handleAuthError(b, ctx, err) {
-						webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
-					} else {
-						var errResp *github.ErrorResponse
-						if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
-							webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
-						}
-					}
-				}
-			}
-		}
+		webhookStatusMsg = h.removeGitHubWebhookQuietly(b, ctx, repoFullName, link.WebhookID)
 	}
 
 	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
@@ -496,6 +471,36 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
+}
+
+// removeGitHubWebhookQuietly deletes the GitHub-side webhook for a repo link,
+// returning a warning suffix for the user when the deletion could not be
+// completed (empty string on success). Best-effort: the local link is removed
+// regardless, since the chat is what the user asked to clean up.
+func (h *CommandHandler) removeGitHubWebhookQuietly(b *gotgbot.Bot, ctx *ext.Context, repoFullName string, webhookID int64) string {
+	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
+	if err != nil {
+		if errors.Is(err, gh.ErrUnauthorized) {
+			return "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
+		}
+		return "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
+	}
+
+	owner, repo, ok := strings.Cut(repoFullName, "/")
+	if !ok || owner == "" || repo == "" {
+		return ""
+	}
+
+	if _, err := client.Repositories.DeleteHook(context.Background(), owner, repo, webhookID); err != nil {
+		if h.handleAuthError(b, ctx, err) {
+			return "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
+		}
+		// 404 means the webhook is already gone from GitHub — nothing to warn about.
+		if !gh.IsNotFoundError(err) {
+			return fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
+		}
+	}
+	return ""
 }
 
 func (h *CommandHandler) Repos(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -583,26 +588,11 @@ func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	var errResp *github.ErrorResponse
-	if errors.As(err, &errResp) {
-		// 401 always means the token is dead. 403 is ambiguous: it can be a
-		// revoked token, but also a legitimate permission denial (e.g. approving
-		// your own PR) or an abuse/rate limit — clearing the token on those would
-		// force a pointless re-auth. Only clear on 401, or a 403 that explicitly
-		// mentions bad credentials.
-		if errResp.Response.StatusCode == http.StatusUnauthorized {
-			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
-			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
-			_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
-			return true
-		}
-		if errResp.Response.StatusCode == http.StatusForbidden &&
-			strings.Contains(strings.ToLower(errResp.Message), "bad credentials") {
-			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
-			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
-			_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
-			return true
-		}
+	if gh.IsInvalidTokenError(err) {
+		_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+		msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
+		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return true
 	}
 	return false
 }
@@ -616,24 +606,10 @@ func (h *CommandHandler) Reopen(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
-	msg := ctx.EffectiveMessage
-	if err := requireAdminOrPrivate(b, ctx, "Only admins can approve pull requests in this chat."); err != nil {
-		return err
-	}
-
-	if msg.ReplyToMessage == nil {
-		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
-		return err
-	}
-
-	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
-	if !found {
-		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
-		return err
-	}
-
-	if mContext.Type != "pr" && mContext.Type != "pr_review" && mContext.Type != "pr_review_comment" {
-		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
+	msg, mContext, ok, err := h.replyActionTarget(b, ctx,
+		"Only admins can approve pull requests in this chat.",
+		"Use the buttons on the notification, or open the PR on GitHub to act on it.", true)
+	if !ok {
 		return err
 	}
 
@@ -660,24 +636,10 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
-	msg := ctx.EffectiveMessage
-	if err := requireAdminOrPrivate(b, ctx, "Only admins can merge pull requests in this chat."); err != nil {
-		return err
-	}
-
-	if msg.ReplyToMessage == nil {
-		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
-		return err
-	}
-
-	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
-	if !found {
-		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the PR on GitHub to act on it.", nil)
-		return err
-	}
-
-	if mContext.Type != "pr" && mContext.Type != "pr_review" && mContext.Type != "pr_review_comment" {
-		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
+	msg, mContext, ok, err := h.replyActionTarget(b, ctx,
+		"Only admins can merge pull requests in this chat.",
+		"Use the buttons on the notification, or open the PR on GitHub to act on it.", true)
+	if !ok {
 		return err
 	}
 
@@ -700,20 +662,60 @@ func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
 	return err
 }
 
-func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, state string) error {
+// lookupMessageContext resolves the GitHub context for a notification message:
+// in-memory cache first, then Mongo (so reply actions survive restarts).
+// Shared by CommandHandler and ReplyHandler.
+func lookupMessageContext(ctxCache *cache.Cache[string, models.MessageContext], database *db.DB, chatID, messageID int64) (models.MessageContext, bool) {
+	key := fmt.Sprintf("%d:%d", chatID, messageID)
+	if mc, ok := ctxCache.Get(key); ok {
+		return mc, true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mc, err := database.GetMessageContext(ctx, chatID, messageID)
+	if err != nil {
+		return models.MessageContext{}, false
+	}
+	// Re-populate the hot cache for subsequent lookups.
+	ctxCache.Set(key, mc, 48*time.Hour)
+	return mc, true
+}
+
+// replyActionTarget validates a reply-based GitHub action command (approve,
+// merge, close, reopen): admin permission, a reply to a notification, a
+// resolvable message context, and — when prOnly — a PR context type.
+// Returns the message and context on success; ok is false when the user has
+// already been answered (err is the error the command should return).
+func (h *CommandHandler) replyActionTarget(b *gotgbot.Bot, ctx *ext.Context, deniedMessage, expiredHint string, prOnly bool) (*gotgbot.Message, models.MessageContext, bool, error) {
 	msg := ctx.EffectiveMessage
-	if err := requireAdminOrPrivate(b, ctx, "Only admins can update issues or pull requests in this chat."); err != nil {
-		return err
+	if err := requireAdminOrPrivate(b, ctx, deniedMessage); err != nil {
+		return nil, models.MessageContext{}, false, err
 	}
 
 	if msg.ReplyToMessage == nil {
 		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
-		return err
+		return nil, models.MessageContext{}, false, err
 	}
 
-	mContext, found := h.lookupMessageContext(ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	mContext, found := lookupMessageContext(h.ContextCache, h.DB, ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
 	if !found {
-		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\nUse the buttons on the notification, or open the item on GitHub to act on it.", nil)
+		_, err := msg.Reply(b, "This notification's context is no longer available (it may be older than 48 hours).\n"+expiredHint, nil)
+		return nil, models.MessageContext{}, false, err
+	}
+
+	if prOnly && mContext.Type != "pr" && mContext.Type != "pr_review" && mContext.Type != "pr_review_comment" {
+		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
+		return nil, models.MessageContext{}, false, err
+	}
+
+	return msg, mContext, true, nil
+}
+
+func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, state string) error {
+	msg, mContext, ok, err := h.replyActionTarget(b, ctx,
+		"Only admins can update issues or pull requests in this chat.",
+		"Use the buttons on the notification, or open the item on GitHub to act on it.", false)
+	if !ok {
 		return err
 	}
 
@@ -757,22 +759,4 @@ func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context
 	}
 
 	return client, nil
-}
-
-// lookupMessageContext resolves the GitHub context for a notification message:
-// in-memory cache first, then Mongo (so actions survive restarts).
-func (h *CommandHandler) lookupMessageContext(chatID, messageID int64) (models.MessageContext, bool) {
-	key := fmt.Sprintf("%d:%d", chatID, messageID)
-	if mc, ok := h.ContextCache.Get(key); ok {
-		return mc, true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	mc, err := h.DB.GetMessageContext(ctx, chatID, messageID)
-	if err != nil {
-		return models.MessageContext{}, false
-	}
-	// Re-populate the hot cache for subsequent lookups.
-	h.ContextCache.Set(key, mc, 48*time.Hour)
-	return mc, true
 }
