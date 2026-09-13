@@ -75,8 +75,8 @@ func getCustomEmojiID(envKey string) string {
 		return v.(string)
 	}
 	id := strings.TrimSpace(os.Getenv(envKey))
-	customEmojiCache.Store(envKey, id)
-	return id
+	actual, _ := customEmojiCache.LoadOrStore(envKey, id)
+	return actual.(string)
 }
 
 func WithCustomEmojiEnv(envKey string) ButtonOption {

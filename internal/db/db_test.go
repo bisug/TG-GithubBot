@@ -1,7 +1,6 @@
 package db
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -53,14 +52,12 @@ func TestBuildUserUpsertShape(t *testing.T) {
 // TestMessageContextKeyFormat locks the _id format shared by Store and Get so a
 // mismatch between writer and reader cannot silently break reply actions.
 func TestMessageContextKeyFormat(t *testing.T) {
-	// The key is built inline in both StoreMessageContext and GetMessageContext;
-	// assert the exact format here so any future change must update this test.
-	storeKey := fmt.Sprintf("%d:%d", int64(-1002147483648), int64(512))
-	getKey := fmt.Sprintf("%d:%d", int64(-1002147483648), int64(512))
-	if storeKey != getKey {
-		t.Fatalf("store/get key mismatch: %q vs %q", storeKey, getKey)
+	key := models.MessageContextKey(int64(-1002147483648), int64(512))
+	want := "-1002147483648:512"
+	if key != want {
+		t.Fatalf("MessageContextKey() = %q, want %q", key, want)
 	}
-	if !strings.Contains(storeKey, ":") {
-		t.Fatalf("key %q missing separator", storeKey)
+	if !strings.Contains(key, ":") {
+		t.Fatalf("key %q missing separator", key)
 	}
 }

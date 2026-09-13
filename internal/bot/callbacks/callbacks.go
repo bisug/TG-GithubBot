@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github-webhook/internal/bot/commands"
 	"github-webhook/internal/bot/ui"
@@ -305,7 +306,7 @@ func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *mode
 	kb = append(kb, ui.Row(ui.BackButton(cb(cbPrefixSettings, cbListRepos))))
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
-		Text:        fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName),
+		Text:        fmt.Sprintf("Configuration for <b>%s</b>:", html.EscapeString(l.RepoFullName)),
 		ReplyMarkup: ui.Markup(kb...),
 		ParseMode:   "HTML",
 	})
@@ -325,7 +326,7 @@ func (h *CallbackHandler) showStopNotificationsConfirm(b *gotgbot.Bot, ctx *ext.
 	)
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
-		Text:        fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", l.RepoFullName),
+		Text:        fmt.Sprintf("Stop notifications for <b>%s</b> in this chat?", html.EscapeString(l.RepoFullName)),
 		ReplyMarkup: kb,
 		ParseMode:   "HTML",
 	})
@@ -366,7 +367,7 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 	}
 
 	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
-		Text:      fmt.Sprintf("Notifications stopped for <b>%s</b>.%s", l.RepoFullName, warning),
+		Text:      fmt.Sprintf("Notifications stopped for <b>%s</b>.%s", html.EscapeString(l.RepoFullName), warning),
 		ParseMode: "HTML",
 	})
 	return err
@@ -749,7 +750,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	// Reuse showRepoMenu to let user choose notifications immediately
 	kb := h.repoMenuButtons(&link)
 
-	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", repo.GetFullName())
+	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!\n\nChoose what events to notify:", html.EscapeString(repo.GetFullName()))
 	_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
 		Text:        msg,
 		ReplyMarkup: ui.Markup(kb...),
@@ -867,7 +868,7 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	repo := prContext.Repo
 	prNum := prContext.PRNumber
 
-	repoFullName := fmt.Sprintf("%s/%s", owner, repo)
+	repoFullName := owner + "/" + repo
 	_, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "This chat is not linked to the repo.", ShowAlert: true})
@@ -878,7 +879,8 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	if err != nil {
 		return nil
 	}
-	ctxBg := context.Background()
+	ctxBg, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	var msg string
 

@@ -158,7 +158,7 @@ const msgCtxTTL = 48 * time.Hour
 // Keyed by chat_id + message_id.
 func (d *DB) StoreMessageContext(ctx context.Context, chatID, messageID int64, mc models.MessageContext) error {
 	doc := bson.M{
-		"_id":          fmt.Sprintf("%d:%d", chatID, messageID),
+		"_id":          models.MessageContextKey(chatID, messageID),
 		"owner":        mc.Owner,
 		"repo":         mc.Repo,
 		"issue_number": mc.IssueNumber,
@@ -180,7 +180,7 @@ func (d *DB) GetMessageContext(ctx context.Context, chatID, messageID int64) (mo
 		CommentID   int64  `bson:"comment_id"`
 		Type        string `bson:"type"`
 	}
-	err := d.MsgCtx.FindOne(ctx, bson.M{"_id": fmt.Sprintf("%d:%d", chatID, messageID)}).Decode(&doc)
+	err := d.MsgCtx.FindOne(ctx, bson.M{"_id": models.MessageContextKey(chatID, messageID)}).Decode(&doc)
 	if err != nil {
 		return models.MessageContext{}, err
 	}

@@ -467,7 +467,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", html.EscapeString(repoFullName), webhookStatusMsg), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
 }
 
@@ -666,7 +666,7 @@ func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
 // in-memory cache first, then Mongo (so reply actions survive restarts).
 // Shared by CommandHandler and ReplyHandler.
 func lookupMessageContext(ctxCache *cache.Cache[string, models.MessageContext], database *db.DB, chatID, messageID int64) (models.MessageContext, bool) {
-	key := fmt.Sprintf("%d:%d", chatID, messageID)
+	key := models.MessageContextKey(chatID, messageID)
 	if mc, ok := ctxCache.Get(key); ok {
 		return mc, true
 	}
@@ -744,6 +744,9 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 }
 
 func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context) (*github.Client, error) {
+	if ctx.EffectiveUser == nil {
+		return nil, errors.New("missing effective user")
+	}
 	client, err := gh.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
 		if errors.Is(err, gh.ErrUnauthorized) {

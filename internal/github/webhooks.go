@@ -417,11 +417,10 @@ func isChatBlocked(err error) bool {
 		strings.Contains(d, "deactivated")
 }
 
-// isMarkdownParseError reports whether err is a Telegram 400 caused by markdown
-// syntax that Telegram could not parse. Only these errors should fall back to
-// plain text.
+// storeMessageContext records the message context in cache and database for
+// reply action routing (/close, /reopen, /approve, /merge, reply-to-comment).
 func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event interface{}) {
-	key := fmt.Sprintf("%d:%d", chatID, messageID)
+	key := models.MessageContextKey(chatID, messageID)
 	var ctx models.MessageContext
 
 	switch e := event.(type) {
@@ -560,6 +559,9 @@ func (s *WebhookServer) withPRActionButtons(event interface{}, markup *gotgbot.I
 	return markup
 }
 
+// isMarkdownParseError reports whether err is a Telegram 400 caused by markdown
+// syntax that Telegram could not parse. Only these errors should fall back to
+// plain text.
 func isMarkdownParseError(err error) bool {
 	var te *gotgbot.TelegramError
 	if !errors.As(err, &te) || te.Code != http.StatusBadRequest {

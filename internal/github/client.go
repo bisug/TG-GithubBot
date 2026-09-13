@@ -50,8 +50,12 @@ func (f *ClientFactory) GetUserClient(_ context.Context, accessToken string) *gi
 	}
 	cc := &cachedClient{client: c}
 	cc.lastUsed.Store(time.Now().UnixNano())
-	f.clients.Store(accessToken, cc)
-	return c
+	actual, loaded := f.clients.LoadOrStore(accessToken, cc)
+	if loaded {
+		cc = actual.(*cachedClient)
+		cc.lastUsed.Store(time.Now().UnixNano())
+	}
+	return cc.client
 }
 
 // Cleanup drops clients that have not been used within clientIdleTTL. Safe to call
@@ -59,8 +63,9 @@ func (f *ClientFactory) GetUserClient(_ context.Context, accessToken string) *gi
 func (f *ClientFactory) Cleanup() {
 	now := time.Now().UnixNano()
 	f.clients.Range(func(key, value any) bool {
-		if now-value.(*cachedClient).lastUsed.Load() > int64(clientIdleTTL) {
-			f.clients.Delete(key)
+		cc := value.(*cachedClient)
+		if now-cc.lastUsed.Load() > int64(clientIdleTTL) {
+			f.clients.CompareAndDelete(key, value)
 		}
 		return true
 	})
