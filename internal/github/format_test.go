@@ -48,8 +48,8 @@ func TestFormatPushEventCapsCommitListAndUsesFirstLine(t *testing.T) {
 		Commits: commits,
 	})
 
-	if strings.Count(msg, "- <a href=") != 10 {
-		t.Fatalf("FormatPushEvent listed %d commits, want 10", strings.Count(msg, "- <a href="))
+	if strings.Count(msg, "• <a href=") != 10 {
+		t.Fatalf("FormatPushEvent listed %d commits, want 10", strings.Count(msg, "• <a href="))
 	}
 	if strings.Contains(msg, "slow body") {
 		t.Fatalf("FormatPushEvent included commit body: %q", msg)
@@ -75,7 +75,7 @@ func TestFormatPushEventCommitLinkHrefAndText(t *testing.T) {
 		}},
 	})
 
-	want := `<a href="https://github.com/owner/repo/commit/0123456789abcdef">0123456</a>`
+	want := `<a href="https://github.com/owner/repo/commit/0123456789abcdef"><code>0123456</code></a>`
 	if !strings.Contains(msg, want) {
 		t.Fatalf("FormatPushEvent commit link = %q, want %q", msg, want)
 	}

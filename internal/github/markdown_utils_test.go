@@ -61,7 +61,7 @@ func TestShortSHA(t *testing.T) {
 	}
 }
 
-func TestFormatReleaseBodyLongUsesSpoiler(t *testing.T) {
+func TestFormatReleaseBodyLongUsesExpandableBlockquote(t *testing.T) {
 	var lines []string
 	for i := 0; i < 15; i++ {
 		lines = append(lines, "line")
@@ -71,8 +71,8 @@ func TestFormatReleaseBodyLongUsesSpoiler(t *testing.T) {
 	if strings.Contains(got, "||") {
 		t.Errorf("FormatReleaseBody() should not emit markdown spoilers in HTML mode")
 	}
-	if !strings.Contains(got, "<blockquote>") || !strings.Contains(got, "<tg-spoiler>") {
-		t.Errorf("FormatReleaseBody() = %q, want blockquote + spoiler", got)
+	if !strings.HasPrefix(got, "<blockquote expandable>") || !strings.HasSuffix(got, "</blockquote>") {
+		t.Errorf("FormatReleaseBody() = %q, want expandable blockquote wrapping", got)
 	}
 }
 
@@ -95,5 +95,67 @@ func TestFormatTextWithMarkdownKeepsCodeVerbatim(t *testing.T) {
 	got := FormatTextWithMarkdown("Run `go test <here>` now")
 	if !strings.Contains(got, "<code>go test &lt;here&gt;</code>") {
 		t.Fatalf("code spans should render as escaped <code>, got %q", got)
+	}
+}
+
+func TestMarkdownToTelegramHTMLHeaders(t *testing.T) {
+	in := "# Title 1\n## Subtitle 2\n### Section 3"
+	got := MarkdownToTelegramHTML(in)
+	for _, want := range []string{"<b>Title 1</b>", "<b>Subtitle 2</b>", "<b>Section 3</b>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("MarkdownToTelegramHTML(%q) missing %q, got: %q", in, want, got)
+		}
+	}
+}
+
+func TestMarkdownToTelegramHTMLBulletsAndNoItalicCorruption(t *testing.T) {
+	in := "* feat: update_user_session function\n* fix: another_snake_case_ident"
+	got := MarkdownToTelegramHTML(in)
+
+	// Bullets must be converted to •
+	if !strings.Contains(got, "• feat: update_user_session function") {
+		t.Errorf("Expected clean bullet point, got: %q", got)
+	}
+	// Must NOT corrupt snake_case with <i> tags
+	if strings.Contains(got, "<i>") {
+		t.Errorf("Must not corrupt snake_case with italics, got: %q", got)
+	}
+}
+
+func TestMarkdownToTelegramHTMLTaskLists(t *testing.T) {
+	in := "- [x] Finished task\n- [ ] Pending task"
+	got := MarkdownToTelegramHTML(in)
+	if !strings.Contains(got, "• ✅ Finished task") {
+		t.Errorf("Expected completed checklist icon, got: %q", got)
+	}
+	if !strings.Contains(got, "• ◻️ Pending task") {
+		t.Errorf("Expected pending checklist icon, got: %q", got)
+	}
+}
+
+func TestMarkdownToTelegramHTMLBlockquotes(t *testing.T) {
+	in := "> First quoted line\n> Second quoted line\n\nNormal line"
+	got := MarkdownToTelegramHTML(in)
+	want := "<blockquote>First quoted line\nSecond quoted line</blockquote>\n\nNormal line"
+	if got != want {
+		t.Errorf("MarkdownToTelegramHTML() = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownToTelegramHTMLFencedCodeLanguage(t *testing.T) {
+	in := "```python\ndef hello():\n    print(\"world\")\n```"
+	got := MarkdownToTelegramHTML(in)
+	want := "<pre><code class=\"language-python\">def hello():\n    print(&#34;world&#34;)</code></pre>"
+	if got != want {
+		t.Errorf("MarkdownToTelegramHTML() = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownToTelegramHTMLImages(t *testing.T) {
+	in := "Look at ![dashboard screenshot](https://example.com/dash.png)!"
+	got := MarkdownToTelegramHTML(in)
+	want := `Look at <a href="https://example.com/dash.png">🖼️ dashboard screenshot</a>!`
+	if got != want {
+		t.Errorf("MarkdownToTelegramHTML() = %q, want %q", got, want)
 	}
 }

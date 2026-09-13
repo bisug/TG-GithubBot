@@ -178,7 +178,7 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 		commitMessage := EscapeHTML(truncateText(firstLine(commit.GetMessage()), 180))
 
 		msg += fmt.Sprintf(
-			"- <a href=\"%s\">%s</a>: %s by %s\n",
+			"• <a href=\"%s\"><code>%s</code></a>: %s by %s\n",
 			EscapeHTMLURL(commitURL),
 			EscapeHTML(shortSHA),
 			commitMessage,
@@ -406,7 +406,7 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 	)
 
 	if action == "created" || action == "edited" {
-		msg += fmt.Sprintf("<b>Comment:</b> %s", FormatTextWithMarkdown(comment))
+		msg += fmt.Sprintf("<b>Comment:</b>\n%s\n", FormatTextWithMarkdown(comment))
 	}
 
 	return FormatMessageWithButton(msg, "View Comment", event.Comment.GetHTMLURL())
@@ -864,14 +864,14 @@ func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent
 	msg := fmt.Sprintf(
 		"%s <b>PR Review Comment %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>PR:</b> <a href=\"%s\">%s#%d</a>\n"+
-			"<b>Comment:</b> %s\n",
+			"<b>PR:</b> <a href=\"%s\">#%d: %s</a>\n"+
+			"<b>Comment:</b>\n%s\n",
 		actionEmoji,
 		EscapeHTML(titleText(action)),
 		FormatRepo(repo),
 		EscapeHTMLURL(pr.GetHTMLURL()),
-		EscapeHTML(pr.GetTitle()),
 		pr.GetNumber(),
+		EscapeHTML(pr.GetTitle()),
 		FormatTextWithMarkdown(comment.GetBody()),
 	)
 	return FormatMessageWithButton(msg, "View Comment", comment.GetHTMLURL())
@@ -892,18 +892,21 @@ func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *go
 	msg := fmt.Sprintf(
 		"%s <b>PR Review %s</b>\n\n"+
 			"<b>Repository:</b> %s\n"+
-			"<b>PR:</b> <a href=\"%s\">%s#%d</a>\n"+
+			"<b>PR:</b> <a href=\"%s\">#%d: %s</a>\n"+
 			"<b>State:</b> %s\n"+
 			"<b>By:</b> %s\n",
 		stateEmoji,
 		EscapeHTML(titleText(action)),
 		FormatRepo(e.GetRepo().GetFullName()),
 		EscapeHTMLURL(pr.GetHTMLURL()),
-		EscapeHTML(pr.GetTitle()),
 		pr.GetNumber(),
-		EscapeHTML(review.GetState()),
+		EscapeHTML(pr.GetTitle()),
+		EscapeHTML(titleText(review.GetState())),
 		FormatUser(e.GetSender().GetLogin()),
 	)
+	if body := review.GetBody(); body != "" {
+		msg += fmt.Sprintf("<b>Review:</b>\n%s\n", FormatTextWithMarkdown(body))
+	}
 	return FormatMessageWithButton(msg, "View Review", review.GetHTMLURL())
 }
 
