@@ -22,7 +22,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 )
 
 const (
@@ -279,7 +279,12 @@ func (s *WebhookServer) sendEventMessage(chatID, threadID int64, msg string, mar
 	// Funnel every send through the per-chat pacer so bursts (a commit firing
 	// check_run + check_suite + workflow_run + workflow_job + ... together) drain
 	// at a safe rate instead of tripping Telegram's per-chat limit.
-	s.Pacer.Wait(chatID, threadID)
+	pacerCtx, pacerCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer pacerCancel()
+	if err := s.Pacer.WaitContext(pacerCtx, chatID, threadID); err != nil {
+		slog.Warn("Pacer wait cancelled or timed out", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
+		return nil, err
+	}
 
 	opts := &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",

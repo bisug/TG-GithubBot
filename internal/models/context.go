@@ -15,4 +15,3 @@ type MessageContext struct {
 func MessageContextKey(chatID, messageID int64) string {
 	return strconv.FormatInt(chatID, 10) + ":" + strconv.FormatInt(messageID, 10)
 }
-

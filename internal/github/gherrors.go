@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	gh "github.com/google/go-github/v90/github"
+	gh "github.com/google/go-github/v91/github"
 )
 
 // IsInvalidTokenError reports whether err is a GitHub API response indicating

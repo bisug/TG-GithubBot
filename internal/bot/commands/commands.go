@@ -21,7 +21,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 )
 
 type CommandHandler struct {
@@ -621,7 +621,9 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 	review := &github.PullRequestReviewRequest{
 		Event: github.String("APPROVE"),
 	}
-	_, _, err = client.PullRequests.CreateReview(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, review)
+	appCtx, appCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer appCancel()
+	_, _, err = client.PullRequests.CreateReview(appCtx, mContext.Owner, mContext.Repo, mContext.IssueNumber, review)
 
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {
@@ -649,7 +651,9 @@ func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Merge method left empty: GitHub picks the method allowed by the repo.
-	_, _, err = client.PullRequests.Merge(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, "", nil)
+	mergeCtx, mergeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer mergeCancel()
+	_, _, err = client.PullRequests.Merge(mergeCtx, mContext.Owner, mContext.Repo, mContext.IssueNumber, "", nil)
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
@@ -725,7 +729,9 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 	}
 
 	req := github.UpdateIssueRequest{State: github.Ptr(state)}
-	_, _, err = client.Issues.Update(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, req)
+	updCtx, updCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer updCancel()
+	_, _, err = client.Issues.Update(updCtx, mContext.Owner, mContext.Repo, mContext.IssueNumber, req)
 
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {

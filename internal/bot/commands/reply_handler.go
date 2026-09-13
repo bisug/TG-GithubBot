@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github-webhook/internal/cache"
 	"github-webhook/internal/db"
@@ -13,7 +14,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	gh "github.com/google/go-github/v90/github"
+	gh "github.com/google/go-github/v91/github"
 )
 
 type ReplyHandler struct {
@@ -65,15 +66,17 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return nil
 	}
+	commentCtx, commentCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer commentCancel()
 	if mContext.Type == "pr_review_comment" && mContext.CommentID != 0 {
-		comment := &gh.PullRequestComment{
-			Body:      &commentBody,
+		comment := gh.CreatePullRequestCommentRequest{
+			Body:      commentBody,
 			InReplyTo: &mContext.CommentID,
 		}
-		_, _, err = client.PullRequests.CreateComment(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
+		_, _, err = client.PullRequests.CreateComment(commentCtx, mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
 	} else {
-		comment := &gh.IssueComment{Body: &commentBody}
-		_, _, err = client.Issues.CreateComment(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
+		comment := gh.IssueCommentRequest{Body: commentBody}
+		_, _, err = client.Issues.CreateComment(commentCtx, mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
 	}
 
 	if err != nil {

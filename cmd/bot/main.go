@@ -313,6 +313,9 @@ func run() (runErr error) {
 		serverErr <- nil
 	}()
 
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
 	// Start Bot (Polling or Webhook)
 	if cfg.UsePolling {
 		slog.Warn("Running in POLLING mode — not recommended for production. " +
@@ -325,7 +328,7 @@ func run() (runErr error) {
 			slog.Info("Successfully deleted existing webhook before starting polling")
 		}
 
-		runPollingLoop(b, updater, "Polling failed", &ext.PollingOpts{
+		runPollingLoop(signalCtx, b, updater, "Polling failed", &ext.PollingOpts{
 			DropPendingUpdates: true,
 			GetUpdatesOpts: &gotgbot.GetUpdatesOpts{
 				Timeout: 9,
@@ -358,14 +361,11 @@ func run() (runErr error) {
 			} else if ok {
 				slog.Info("Deleted existing webhook before polling fallback")
 			}
-			runPollingLoop(b, updater, "Polling fallback failed", &ext.PollingOpts{DropPendingUpdates: true})
+			runPollingLoop(signalCtx, b, updater, "Polling fallback failed", &ext.PollingOpts{DropPendingUpdates: true})
 		} else {
 			slog.Info("Bot successfully registered webhook at Telegram", "url", webhookBase+"/bot<redacted>")
 		}
 	}
-
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 
 	// Periodically sweep TTL caches so they do not grow unbounded (entries otherwise
 	// only evict on re-access, and most are never read again).
@@ -459,23 +459,32 @@ func shutdown(ctx context.Context, server *http.Server, updater *ext.Updater, da
 }
 
 // runPollingLoop starts Telegram polling in a background goroutine and retries
-// forever with backoff, treating the "terminated by other getUpdates request"
-// conflict as an expected deploy race. failureLog prefixes the retry error
+// with backoff until ctx is cancelled, treating the "terminated by other getUpdates
+// request" conflict as an expected deploy race. failureLog prefixes the retry error
 // message so each call site keeps its distinct log text.
-func runPollingLoop(b *gotgbot.Bot, updater *ext.Updater, failureLog string, opts *ext.PollingOpts) {
+func runPollingLoop(ctx context.Context, b *gotgbot.Bot, updater *ext.Updater, failureLog string, opts *ext.PollingOpts) {
 	go func() {
 		for {
-			err := updater.StartPolling(b, opts)
-			if err == nil {
+			if ctx.Err() != nil {
 				return
 			}
+			err := updater.StartPolling(b, opts)
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			delay := 5 * time.Second
 			if strings.Contains(err.Error(), "terminated by other getUpdates request") {
 				slog.Warn("Polling conflict detected (expected during deploy); retrying in 2s")
-				time.Sleep(2 * time.Second)
-				continue
+				delay = 2 * time.Second
+			} else {
+				slog.Error(failureLog+"; retrying in 5s", "error", err)
 			}
-			slog.Error(failureLog+"; retrying in 5s", "error", err)
-			time.Sleep(5 * time.Second)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 		}
 	}()
 }

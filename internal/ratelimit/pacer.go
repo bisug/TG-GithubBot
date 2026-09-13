@@ -13,6 +13,7 @@
 package ratelimit
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -53,12 +54,15 @@ func NewPacer() *Pacer {
 	}
 }
 
-// Wait blocks until the now is past both the per-chat and global slots,
-// reserving them for this call. Call Wait immediately before SendMessage.
-// If p is nil it is a no-op (so callers may use a nil Pacer safely).
-func (p *Pacer) Wait(chatID, threadID int64) {
+// WaitContext blocks until the current time is past both the per-chat and global
+// slots, reserving them for this call, or until ctx is cancelled. Call immediately
+// before SendMessage. If p is nil it is a no-op returning nil.
+func (p *Pacer) WaitContext(ctx context.Context, chatID, threadID int64) error {
 	if p == nil {
-		return
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	slotKey := chatSlot{chatID: chatID, threadID: threadID}
 
@@ -76,9 +80,26 @@ func (p *Pacer) Wait(chatID, threadID int64) {
 	p.chatNext[slotKey] = next.Add(p.perChat)
 	p.mu.Unlock()
 
-	if d := time.Until(next); d > 0 {
-		time.Sleep(d)
+	d := time.Until(next)
+	if d <= 0 {
+		return nil
 	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// Wait blocks until the current time is past both the per-chat and global slots.
+// Preserved for backwards compatibility; prefer WaitContext when a context is available.
+func (p *Pacer) Wait(chatID, threadID int64) {
+	_ = p.WaitContext(context.Background(), chatID, threadID)
 }
 
 // Cleanup drops saved per-chat slots that are no longer in the future, so the

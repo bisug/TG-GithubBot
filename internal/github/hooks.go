@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	gh "github.com/google/go-github/v90/github"
+	gh "github.com/google/go-github/v91/github"
 )
 
 func TriggerRepositoryHookTest(ctx context.Context, client *gh.Client, owner, repo string, hookID int64) error {
