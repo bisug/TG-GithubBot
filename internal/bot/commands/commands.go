@@ -25,34 +25,28 @@ import (
 )
 
 type CommandHandler struct {
-	Config     *config.Config
-	DB         *db.DB
-	OAuth      *gh.OAuth
-	StateCache *cache.Cache[string, int64]
-	// UsedStateCache tracks OAuth states that have been issued so the callback
-	// can atomically claim them (single-use, via cache.ClaimSingleUse) and
-	// reject replays. Entries hold the owning telegram ID; the zero value marks
-	// an already-claimed state.
-	UsedStateCache *cache.Cache[string, int64]
-	ClientFactory  *gh.ClientFactory
-	EncryptionKey  string
-	ContextCache   *cache.Cache[string, models.MessageContext]
+	Config        *config.Config
+	DB            *db.DB
+	OAuth         *gh.OAuth
+	StateCache    *cache.Cache[string, int64]
+	ClientFactory *gh.ClientFactory
+	EncryptionKey string
+	ContextCache  *cache.Cache[string, models.MessageContext]
 	// SearchCache tracks pending repo-search prompts: the ForceReply message
 	// ID -> chat that issued the search. The reply handler consumes it.
 	SearchCache *cache.Cache[string, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], usedStateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], searchCache *cache.Cache[string, int64]) *CommandHandler {
 	return &CommandHandler{
-		Config:         cfg,
-		DB:             database,
-		OAuth:          oauth,
-		StateCache:     stateCache,
-		UsedStateCache: usedStateCache,
-		ClientFactory:  factory,
-		EncryptionKey:  key,
-		ContextCache:   ctxCache,
-		SearchCache:    searchCache,
+		Config:        cfg,
+		DB:            database,
+		OAuth:         oauth,
+		StateCache:    stateCache,
+		ClientFactory: factory,
+		EncryptionKey: key,
+		ContextCache:  ctxCache,
+		SearchCache:   searchCache,
 	}
 }
 
@@ -86,7 +80,17 @@ Need help? Type /help for a full list of commands.`
 		return h.Connect(b, ctx)
 	}
 
-	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	opts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
+	if ctx.EffectiveChat != nil && ctx.EffectiveChat.Type == gotgbot.ChatTypePrivate && ctx.EffectiveUser != nil {
+		if url, err := h.loginURLForUser(ctx.EffectiveUser.Id); err == nil {
+			opts.ReplyMarkup = ui.Markup(ui.Row(ui.URL("Connect GitHub", url,
+				ui.WithStyle(ui.StylePrimary),
+				ui.WithCustomEmojiEnv(ui.IconConnect),
+			)))
+		}
+	}
+
+	_, err := ctx.EffectiveMessage.Reply(b, msg, opts)
 	return err
 }
 
@@ -116,12 +120,6 @@ func (h *CommandHandler) loginURLForUser(userID int64) (string, error) {
 	}
 
 	h.StateCache.Set(state, userID, 10*time.Minute)
-	if h.UsedStateCache != nil {
-		// Pre-seed the single-use claim set with the owning telegram ID so the
-		// callback can atomically redeem the state exactly once (and reject
-		// concurrent/sequential replays).
-		h.UsedStateCache.Set(state, userID, 10*time.Minute)
-	}
 	return h.OAuth.GetLoginURL(state), nil
 }
 
@@ -528,6 +526,8 @@ func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
 
 <b>Account</b>
 /connect - Link your GitHub account (<i>Must be used in private chat</i>)
+/logout - Disconnect your GitHub account
+/privacy - View privacy policy
 
 <b>Repository Management</b>
 /addrepo [owner/repo] - Link a repository

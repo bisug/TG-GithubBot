@@ -71,10 +71,6 @@ func run() (runErr error) {
 	oauth := github.NewOAuth(cfg)
 	clientFactory := github.NewClientFactory()
 	oauthStateCache := cache.New[string, int64]()
-	// oauthStateUsed tracks OAuth states that have been issued (pre-seeded with
-	// the owning telegram ID) so the callback can atomically claim them
-	// (single-use) and reject replays.
-	oauthStateUsed := cache.New[string, int64]()
 	contextCache := cache.New[string, models.MessageContext]()
 	actionCache := cache.New[string, models.PRActionContext]()
 	searchCache := cache.New[string, int64]()
@@ -98,7 +94,7 @@ func run() (runErr error) {
 	dispatcher.AddHandlerToGroup(handlers.NewCallback(nil, middleware.TrackUserAndChat(database)), -1)
 
 	// Commands
-	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, oauthStateUsed, clientFactory, cfg.EncryptionKey, contextCache, searchCache)
+	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, searchCache)
 	dispatcher.AddHandler(handlers.NewCommand("start", cmdHandler.Start))
 	dispatcher.AddHandler(handlers.NewCommand("connect", cmdHandler.Connect))
 	dispatcher.AddHandler(handlers.NewCommand("add", cmdHandler.AddRepo))
@@ -219,15 +215,14 @@ func run() (runErr error) {
 
 		// `state` may only be presented once: if two browsers (or an attacker
 		// who saw the URL) race to the callback, the second must be rejected
-		// instead of exchanging the same `code` twice. The used-state cache is
+		// instead of exchanging the same `code` twice. The state cache is
 		// pre-seeded at /connect time (see loginURLForUser) with the owning
-		// telegram ID; ClaimSingleUse transitions it atomically, so exactly one
+		// telegram ID; ClaimSingleUse transitions it atomically to 0, so exactly one
 		// presenter can redeem it. If the state was issued before a restart
 		// (pre-seed lost but still cryptographically valid via resolveOAuthState
 		// above), it is claimed on first presentation instead of being rejected,
 		// and replays after that are still refused.
-		oauthStateCache.Delete(state)
-		if !cache.ClaimSingleUse(oauthStateUsed, state, telegramID, 10*time.Minute) {
+		if !cache.ClaimSingleUse(oauthStateCache, state, telegramID, 10*time.Minute) {
 			slog.Warn("OAuth callback rejected: state already used")
 			http.Error(w, "Invalid or expired state. Please return to Telegram and run /connect again.", http.StatusBadRequest)
 			return
@@ -384,11 +379,11 @@ func run() (runErr error) {
 			case <-ticker.C:
 				database.ChatReposCache.Cleanup()
 				oauthStateCache.Cleanup()
-				oauthStateUsed.Cleanup()
 				contextCache.Cleanup()
 				actionCache.Cleanup()
 				searchCache.Cleanup()
 				webhookServer.DeliverySeen.Cleanup()
+				webhookServer.WebhookTokenCache.Cleanup()
 				webhookServer.Pacer.Cleanup()
 				clientFactory.Cleanup()
 				middleware.CleanupChatUpsertSeen()
@@ -402,16 +397,10 @@ func run() (runErr error) {
 		slog.Info("Shutdown signal received")
 	case err := <-serverErr:
 		if err != nil {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			shutdownErr := shutdown(shutdownCtx, server, updater, database, webhookServer, b)
-			databaseClosed = true
-			if shutdownErr != nil {
-				return errors.Join(fmt.Errorf("server failed: %w", err), fmt.Errorf("shutdown after server failure: %w", shutdownErr))
-			}
-			return fmt.Errorf("server failed: %w", err)
+			runErr = fmt.Errorf("server failed: %w", err)
+		} else {
+			slog.Info("Server stopped")
 		}
-		slog.Info("Server stopped")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -420,7 +409,13 @@ func run() (runErr error) {
 	err = shutdown(shutdownCtx, server, updater, database, webhookServer, b)
 	databaseClosed = true
 	if err != nil {
+		if runErr != nil {
+			return errors.Join(runErr, fmt.Errorf("shutdown after server failure: %w", err))
+		}
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	if runErr != nil {
+		return runErr
 	}
 
 	slog.Info("Shutdown complete")
@@ -491,7 +486,10 @@ func resolveOAuthState(state string, stateCache *cache.Cache[string, int64], enc
 	}
 
 	if telegramID, ok := stateCache.Get(state); ok {
-		return telegramID, nil
+		if telegramID != 0 {
+			return telegramID, nil
+		}
+		return 0, fmt.Errorf("state already used")
 	}
 
 	decrypted, err := utils.Decrypt(state, encryptionKey)

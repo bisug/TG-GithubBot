@@ -18,8 +18,6 @@ import (
 	"github-webhook/internal/models"
 	"github-webhook/internal/utils"
 
-	"net/http"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	gh "github.com/google/go-github/v90/github"
@@ -37,6 +35,9 @@ type CallbackHandler struct {
 }
 
 func (h *CallbackHandler) getClient(b *gotgbot.Bot, ctx *ext.Context) (*gh.Client, error) {
+	if ctx.EffectiveUser == nil {
+		return nil, errors.New("missing effective user")
+	}
 	client, err := github.GetClientForUser(context.Background(), h.DB, h.ClientFactory, ctx.EffectiveUser.Id, h.EncryptionKey)
 	if err != nil {
 		msg := "Authentication failed."
@@ -67,12 +68,10 @@ func (h *CallbackHandler) WithCommandHandler(ch *commands.CommandHandler) *Callb
 }
 
 // Event aliases to compress callback data
-var eventToShort = map[string]string{}
 var shortToEvent = map[string]string{}
 
 func init() {
 	for _, e := range github.SupportedEvents {
-		eventToShort[e.Name] = e.Short
 		shortToEvent[e.Short] = e.Name
 	}
 }
@@ -146,6 +145,9 @@ func toggleEvent(events []string, evt string) []string {
 }
 
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat == nil || ctx.EffectiveUser == nil {
+		return nil
+	}
 	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can change settings", ShowAlert: true})
 		return nil
@@ -342,16 +344,15 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 				warning = "\n\nWarning: your GitHub token could not be decrypted, so the GitHub webhook was not removed automatically."
 			}
 		} else {
-			parts := strings.Split(l.RepoFullName, "/")
-			if len(parts) == 2 {
-				_, err = client.Repositories.DeleteHook(context.Background(), parts[0], parts[1], l.WebhookID)
+			owner, repo, ok := strings.Cut(l.RepoFullName, "/")
+			if ok && owner != "" && repo != "" {
+				_, err = client.Repositories.DeleteHook(context.Background(), owner, repo, l.WebhookID)
 				if err != nil {
 					if h.handleAuthError(b, ctx, err) {
 						return nil
 					}
 
-					var errResp *gh.ErrorResponse
-					if !errors.As(err, &errResp) || errResp.Response.StatusCode != http.StatusNotFound {
+					if !github.IsNotFoundError(err) {
 						warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %v", err)
 					}
 				}
@@ -380,12 +381,11 @@ func (h *CallbackHandler) setHookEvents(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	if err != nil {
 		return nil, nil, false
 	}
-	repoParts := strings.Split(l.RepoFullName, "/")
-	if len(repoParts) != 2 {
+	owner, repoName, ok := strings.Cut(l.RepoFullName, "/")
+	if !ok || owner == "" || repoName == "" {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil, nil, false
 	}
-	owner, repoName := repoParts[0], repoParts[1]
 
 	hook, _, hErr := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
 	if hErr != nil {
@@ -448,9 +448,9 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 	if !ok {
 		return nil
 	}
-	parts := strings.Split(l.RepoFullName, "/")
+	owner, repo, _ := strings.Cut(l.RepoFullName, "/")
 
-	if err := github.TriggerRepositoryHookPing(context.Background(), client, parts[0], parts[1], l.WebhookID); err != nil {
+	if err := github.TriggerRepositoryHookPing(context.Background(), client, owner, repo, l.WebhookID); err != nil {
 		slog.Warn("Webhook ping delivery failed", "repo", l.RepoFullName, "hook_id", l.WebhookID, "error", err)
 		responseText += fmt.Sprintf("\n\n⚠️ GitHub ping delivery failed: %s", html.EscapeString(err.Error()))
 	} else {
@@ -522,13 +522,13 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		}
 		return nil
 	}
-	parts := strings.Split(l.RepoFullName, "/")
-	if len(parts) != 2 {
+	owner, repoName, ok := strings.Cut(l.RepoFullName, "/")
+	if !ok || owner == "" || repoName == "" {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil
 	}
 
-	hook, _, err := client.Repositories.GetHook(context.Background(), parts[0], parts[1], l.WebhookID)
+	hook, _, err := client.Repositories.GetHook(context.Background(), owner, repoName, l.WebhookID)
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
@@ -544,12 +544,11 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 // keyboard built from the given (already-fetched) hook, avoiding an extra
 // GitHub API round-trip after every toggle.
 func (h *CallbackHandler) renderIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, hook *gh.Hook, page int, note string) error {
-	parts := strings.Split(l.RepoFullName, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	owner, repoName, ok := strings.Cut(l.RepoFullName, "/")
+	if !ok || owner == "" || repoName == "" {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository name."})
 		return nil
 	}
-	owner, repoName := parts[0], parts[1]
 
 	enabledEvents := make(map[string]bool)
 	if hook != nil {
@@ -839,6 +838,9 @@ func (h *CallbackHandler) handleTestHook(b *gotgbot.Bot, ctx *ext.Context, l *mo
 }
 
 func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat == nil || ctx.EffectiveUser == nil {
+		return nil
+	}
 	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id) {
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Only admins can perform PR actions", ShowAlert: true})
 		return nil
@@ -913,7 +915,9 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 
 func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
 	if github.IsInvalidTokenError(err) {
-		_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+		if ctx.EffectiveUser != nil {
+			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
 		return true
 	}

@@ -46,6 +46,10 @@ func EscapeHTMLURL(text string) string {
 // text) into the Telegram HTML subset. Unconvertible constructs degrade
 // gracefully to plain escaped text.
 func MarkdownToTelegramHTML(body string) string {
+	if body == "" {
+		return ""
+	}
+
 	var fences []string
 	protected := fenceRe.ReplaceAllStringFunc(body, func(m string) string {
 		sub := fenceRe.FindStringSubmatch(m)
@@ -69,11 +73,15 @@ func MarkdownToTelegramHTML(body string) string {
 	protected = italicRe.ReplaceAllString(protected, "$1<i>$2</i>$3")
 	protected = strikeRe.ReplaceAllString(protected, "<s>$1</s>")
 
-	for i, c := range codes {
-		protected = strings.Replace(protected, fmt.Sprintf("\x00CODE%d\x00", i), c, 1)
-	}
-	for i, f := range fences {
-		protected = strings.Replace(protected, fmt.Sprintf("\x00FENCE%d\x00", i), f, 1)
+	if len(codes) > 0 || len(fences) > 0 {
+		repls := make([]string, 0, (len(codes)+len(fences))*2)
+		for i, c := range codes {
+			repls = append(repls, fmt.Sprintf("\x00CODE%d\x00", i), c)
+		}
+		for i, f := range fences {
+			repls = append(repls, fmt.Sprintf("\x00FENCE%d\x00", i), f)
+		}
+		protected = strings.NewReplacer(repls...).Replace(protected)
 	}
 	return strings.TrimSpace(protected)
 }

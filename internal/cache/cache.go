@@ -37,7 +37,7 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 
 	itm := val.(item[V])
 	if time.Now().After(itm.expiration) {
-		c.items.Delete(key)
+		c.items.CompareAndDelete(key, val)
 		var zero V
 		return zero, false
 	}
@@ -72,19 +72,32 @@ func (c *Cache[K, V]) Consume(key K) (V, bool) {
 // the key was not present (or was expired). Use it for best-effort dedup sets:
 // racing callers cannot both observe "absent" and both proceed.
 func (c *Cache[K, V]) AddIfAbsent(key K, value V, ttl time.Duration) bool {
-	_, loaded := c.items.LoadOrStore(key, item[V]{
+	newItem := item[V]{
 		value:      value,
 		expiration: time.Now().Add(ttl),
-	})
-	return !loaded
+	}
+	for {
+		val, loaded := c.items.LoadOrStore(key, newItem)
+		if !loaded {
+			return true
+		}
+		itm := val.(item[V])
+		if !time.Now().After(itm.expiration) {
+			return false
+		}
+		if c.items.CompareAndSwap(key, val, newItem) {
+			return true
+		}
+	}
 }
 
 // Cleanup removes expired items
 func (c *Cache[K, V]) Cleanup() {
+	now := time.Now()
 	c.items.Range(func(key, value any) bool {
 		itm := value.(item[V])
-		if time.Now().After(itm.expiration) {
-			c.items.Delete(key)
+		if now.After(itm.expiration) {
+			c.items.CompareAndDelete(key, value)
 		}
 		return true
 	})

@@ -232,3 +232,30 @@ func TestFormatHeadersUseTitleCaseActionAndFieldLines(t *testing.T) {
 		t.Fatalf("FormatMilestoneEvent header = %q, want '🏁 <b>Milestone Opened</b>'", milestoneMsg)
 	}
 }
+
+func TestFormatDeploymentAndDeployKeyRepoLinks(t *testing.T) {
+	wantLink := `<a href="https://github.com/owner/repo">owner/repo</a>`
+
+	deployMsg, _ := FormatDeploymentEvent(&gh.DeploymentEvent{
+		Repo: &gh.Repository{FullName: gh.Ptr("owner/repo"), Name: gh.Ptr("repo")},
+	})
+	if !strings.Contains(deployMsg, wantLink) {
+		t.Fatalf("FormatDeploymentEvent repo link = %q, want full name link %q", deployMsg, wantLink)
+	}
+
+	keyMsg, _ := FormatDeployKeyEvent(&gh.DeployKeyEvent{
+		Action: gh.Ptr("created"),
+		Repo:   &gh.Repository{FullName: gh.Ptr("owner/repo"), Name: gh.Ptr("repo")},
+	})
+	if !strings.Contains(keyMsg, wantLink) {
+		t.Fatalf("FormatDeployKeyEvent repo link = %q, want full name link %q", keyMsg, wantLink)
+	}
+
+	statusMsg, _ := FormatDeploymentStatusEvent(&gh.DeploymentStatusEvent{
+		DeploymentStatus: &gh.DeploymentStatus{State: gh.Ptr("success")},
+		Repo:             &gh.Repository{FullName: gh.Ptr("owner/repo"), Name: gh.Ptr("repo")},
+	})
+	if !strings.Contains(statusMsg, wantLink) {
+		t.Fatalf("FormatDeploymentStatusEvent repo link = %q, want full name link %q", statusMsg, wantLink)
+	}
+}

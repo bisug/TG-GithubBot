@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"unicode/utf8"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	gh "github.com/google/go-github/v90/github"
@@ -63,12 +65,23 @@ func WithStyle(style string) ButtonOption {
 	}
 }
 
+var customEmojiCache sync.Map
+
+func getCustomEmojiID(envKey string) string {
+	if envKey == "" {
+		return ""
+	}
+	if v, ok := customEmojiCache.Load(envKey); ok {
+		return v.(string)
+	}
+	id := strings.TrimSpace(os.Getenv(envKey))
+	customEmojiCache.Store(envKey, id)
+	return id
+}
+
 func WithCustomEmojiEnv(envKey string) ButtonOption {
 	return func(btn *gotgbot.InlineKeyboardButton) {
-		if envKey == "" {
-			return
-		}
-		if id := strings.TrimSpace(os.Getenv(envKey)); id != "" {
+		if id := getCustomEmojiID(envKey); id != "" {
 			btn.IconCustomEmojiId = id
 		}
 	}
@@ -167,9 +180,9 @@ func RepoPageNav(page int, resp *gh.Response, pageData func(int) string) []gotgb
 // CompactButtonText truncates a button label to Telegram-friendly length with an ellipsis.
 func CompactButtonText(name string) string {
 	const max = 42
-	runes := []rune(name)
-	if len(runes) <= max {
+	if utf8.RuneCountInString(name) <= max {
 		return name
 	}
+	runes := []rune(name)
 	return string(runes[:max-1]) + "…"
 }

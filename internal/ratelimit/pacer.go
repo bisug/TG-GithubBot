@@ -13,7 +13,6 @@
 package ratelimit
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -29,12 +28,18 @@ const (
 	defaultGlobalInterval = 60 * time.Millisecond
 )
 
+// chatSlot pairs chatID and threadID as a zero-allocation map key.
+type chatSlot struct {
+	chatID   int64
+	threadID int64
+}
+
 // Pacer schedules sends to respect Telegram's per-chat and bot-wide limits.
 // It is safe for concurrent use.
 type Pacer struct {
 	mu         sync.Mutex
-	globalNext time.Time            // earliest time ANY send may start (bot-wide)
-	chatNext   map[string]time.Time // key "chatID:threadID" -> earliest this chat may send
+	globalNext time.Time              // earliest time ANY send may start (bot-wide)
+	chatNext   map[chatSlot]time.Time // chat slot -> earliest this chat may send
 	perChat    time.Duration
 	global     time.Duration
 }
@@ -42,7 +47,7 @@ type Pacer struct {
 // NewPacer creates a Pacer with sensible per-chat and global intervals.
 func NewPacer() *Pacer {
 	return &Pacer{
-		chatNext: make(map[string]time.Time),
+		chatNext: make(map[chatSlot]time.Time),
 		perChat:  defaultPerChatInterval,
 		global:   defaultGlobalInterval,
 	}
@@ -55,7 +60,7 @@ func (p *Pacer) Wait(chatID, threadID int64) {
 	if p == nil {
 		return
 	}
-	key := fmt.Sprintf("%d:%d", chatID, threadID)
+	slotKey := chatSlot{chatID: chatID, threadID: threadID}
 
 	p.mu.Lock()
 	now := time.Now()
@@ -63,12 +68,12 @@ func (p *Pacer) Wait(chatID, threadID int64) {
 	if p.globalNext.After(next) {
 		next = p.globalNext
 	}
-	if slot, ok := p.chatNext[key]; ok && slot.After(next) {
+	if slot, ok := p.chatNext[slotKey]; ok && slot.After(next) {
 		next = slot
 	}
 	// Reserve both slots for the next interval.
 	p.globalNext = next.Add(p.global)
-	p.chatNext[key] = next.Add(p.perChat)
+	p.chatNext[slotKey] = next.Add(p.perChat)
 	p.mu.Unlock()
 
 	if d := time.Until(next); d > 0 {

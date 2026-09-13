@@ -15,7 +15,7 @@ import (
 // complaint clears the token.
 func IsInvalidTokenError(err error) bool {
 	var errResp *gh.ErrorResponse
-	if !errors.As(err, &errResp) {
+	if !errors.As(err, &errResp) || errResp.Response == nil {
 		return false
 	}
 	switch errResp.Response.StatusCode {
@@ -34,5 +34,5 @@ func IsInvalidTokenError(err error) bool {
 // a webhook on a repo the account is not an admin of).
 func IsNotFoundError(err error) bool {
 	var errResp *gh.ErrorResponse
-	return errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound
+	return errors.As(err, &errResp) && errResp.Response != nil && errResp.Response.StatusCode == http.StatusNotFound
 }

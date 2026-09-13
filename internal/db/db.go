@@ -34,7 +34,7 @@ type DB struct {
 var ErrLinkNotFound = errors.New("link not found")
 
 func Connect(cfg *config.Config) (*DB, error) {
-	clientOpts := options.Client().ApplyURI(cfg.MongoDBURI)
+	clientOpts := options.Client().ApplyURI(cfg.MongoDBURI).SetTimeout(15 * time.Second)
 	client, err := mongo.Connect(clientOpts)
 	if err != nil {
 		return nil, err
@@ -242,9 +242,12 @@ func (d *DB) AddRepoLink(ctx context.Context, chatID int64, link models.RepoLink
 		}},
 	}
 	_, err := d.Chats.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
+	if err != nil {
+		return err
+	}
 
 	d.ChatReposCache.Delete(chatID)
-	return err
+	return nil
 }
 
 // RemoveRepoLink removes a repository link from a chat
@@ -254,9 +257,12 @@ func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName stri
 		"$pull": bson.M{"links": bson.M{"repo_full_name": repoFullName}},
 	}
 	_, err := d.Chats.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return err
+	}
 
 	d.ChatReposCache.Delete(chatID)
-	return err
+	return nil
 }
 
 // RemoveChatLinks removes every repository link from a chat (used when the chat

@@ -98,6 +98,22 @@ func TestAddIfAbsent(t *testing.T) {
 	}
 }
 
+// TestAddIfAbsentExpired verifies that AddIfAbsent successfully claims an expired key.
+func TestAddIfAbsentExpired(t *testing.T) {
+	c := New[string, int]()
+	c.Set("d1", 1, time.Nanosecond)
+	time.Sleep(time.Millisecond)
+
+	if !c.AddIfAbsent("d1", 2, 10*time.Minute) {
+		t.Fatal("AddIfAbsent on expired key must succeed")
+	}
+
+	val, ok := c.Get("d1")
+	if !ok || val != 2 {
+		t.Fatalf("expected value 2 after AddIfAbsent on expired key, got val=%v, ok=%v", val, ok)
+	}
+}
+
 // TestClaimSingleUse verifies that ClaimSingleUse allows exactly one claim of a
 // pre-seeded token, and that replays are rejected afterwards.
 func TestClaimSingleUse(t *testing.T) {

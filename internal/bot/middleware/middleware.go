@@ -40,7 +40,9 @@ func TrackUserAndChat(database *db.DB) func(b *gotgbot.Bot, ctx *ext.Context) er
 			}
 
 			go func() {
-				_ = database.UpsertChat(context.Background(), dbChat)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = database.UpsertChat(ctx, dbChat)
 			}()
 		}
 		return nil

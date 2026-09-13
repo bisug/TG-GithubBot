@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github-webhook/internal/bot/ui"
 	"github-webhook/internal/cache"
@@ -33,31 +34,32 @@ const (
 	maxConcurrentDeliveries = 64
 )
 
-var markdownLinkPattern = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 var multipleNewlinesRegex = regexp.MustCompile(`\n{3,}`)
 
 type WebhookServer struct {
-	Config       *config.Config
-	DB           *db.DB
-	Bot          *gotgbot.Bot
-	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
-	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
-	DeliverySeen *cache.Cache[string, struct{}]               // Key: X-GitHub-Delivery (idempotency)
-	Pacer        *ratelimit.Pacer                             // paces outbound sendMessage calls per chat
-	Wg           sync.WaitGroup
-	sem          chan struct{} // bounds concurrent webhook processing goroutines
+	Config            *config.Config
+	DB                *db.DB
+	Bot               *gotgbot.Bot
+	ContextCache      *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
+	ActionCache       *cache.Cache[string, models.PRActionContext] // Key: UUID
+	DeliverySeen      *cache.Cache[string, struct{}]               // Key: X-GitHub-Delivery (idempotency)
+	WebhookTokenCache *cache.Cache[string, int64]                  // Key: encrypted token -> chatID
+	Pacer             *ratelimit.Pacer                             // paces outbound sendMessage calls per chat
+	Wg                sync.WaitGroup
+	sem               chan struct{} // bounds concurrent webhook processing goroutines
 }
 
 func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
 	return &WebhookServer{
-		Config:       cfg,
-		DB:           database,
-		Bot:          bot,
-		ContextCache: ctxCache,
-		ActionCache:  actionCache,
-		DeliverySeen: cache.New[string, struct{}](),
-		Pacer:        ratelimit.NewPacer(),
-		sem:          make(chan struct{}, maxConcurrentDeliveries),
+		Config:            cfg,
+		DB:                database,
+		Bot:               bot,
+		ContextCache:      ctxCache,
+		ActionCache:       actionCache,
+		DeliverySeen:      cache.New[string, struct{}](),
+		WebhookTokenCache: cache.New[string, int64](),
+		Pacer:             ratelimit.NewPacer(),
+		sem:               make(chan struct{}, maxConcurrentDeliveries),
 	}
 }
 
@@ -95,17 +97,22 @@ func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pat
 	path := r.URL.Path
 	if strings.HasPrefix(path, pathPrefix) && len(path) > len(pathPrefix) {
 		token := path[len(pathPrefix):] // strip the prefix
-		decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
-		if err == nil {
-			id, err := strconv.ParseInt(decrypted, 10, 64)
-			if err == nil {
-				chatID = id
-				// slog.Debug("Decrypted chat ID from token", "chat", chatID)
-			} else {
-				slog.Error("Failed to parse decrypted token as int64", "error", err)
-			}
+		if cachedID, ok := s.WebhookTokenCache.Get(token); ok {
+			chatID = cachedID
 		} else {
-			slog.Error("Failed to decrypt webhook token", "error", err)
+			decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
+			if err == nil {
+				id, err := strconv.ParseInt(decrypted, 10, 64)
+				if err == nil {
+					chatID = id
+					s.WebhookTokenCache.Set(token, chatID, 24*time.Hour)
+					// slog.Debug("Decrypted chat ID from token", "chat", chatID)
+				} else {
+					slog.Error("Failed to parse decrypted token as int64", "error", err)
+				}
+			} else {
+				slog.Error("Failed to decrypt webhook token", "error", err)
+			}
 		}
 	}
 
@@ -215,31 +222,28 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	msg = truncateTelegramHTML(msg, maxTelegramText)
 
 	var threadID int64
-	if hookID != 0 {
+	repoFullName := eventRepoFullName(event)
+	if hookID != 0 || repoFullName != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
-		link, err := s.DB.GetRepoLinkByWebhookID(ctx, chatID, hookID)
-		cancel()
-		if err == nil && link != nil {
-			threadID = link.MessageThreadID
-		}
-	}
-
-	// The webhook URL only encodes the chat, not the repository. If the repo was
-	// unlinked but the GitHub-side webhook deletion failed (403/404), events would
-	// keep flowing with no bot-side off switch — so verify the link before sending.
-	if repoFullName := eventRepoFullName(event); repoFullName != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), webhookDBTimeout)
-		_, err := s.DB.GetRepoLink(ctx, chatID, repoFullName)
+		links, err := s.DB.GetChatLinks(ctx, chatID)
 		cancel()
 		if err != nil {
-			if errors.Is(err, db.ErrLinkNotFound) {
-				slog.Info("Webhook skipped: repository not linked to this chat", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID)
-			} else {
-				// A database failure is not the same as "not linked": log it
-				// distinctly so outages are visible instead of masquerading as
-				// unlink activity.
-				slog.Error("Webhook skipped: link lookup failed", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID, "error", err)
+			slog.Error("Webhook skipped: link lookup failed", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID, "error", err)
+			return
+		}
+
+		repoLinked := (repoFullName == "")
+		for _, link := range links {
+			if hookID != 0 && link.WebhookID == hookID {
+				threadID = link.MessageThreadID
 			}
+			if repoFullName != "" && link.RepoFullName == repoFullName {
+				repoLinked = true
+			}
+		}
+
+		if !repoLinked {
+			slog.Info("Webhook skipped: repository not linked to this chat", "repo", repoFullName, "chat", chatID, "event", eventType, "delivery", deliveryID, "hook_id", hookID)
 			return
 		}
 	}
@@ -516,14 +520,11 @@ func eventRepoFullName(event interface{}) string {
 // prActionTarget returns the owner, repo and PR number for events that support
 // inline PR actions (approve/close). ok is false for unsupported events.
 func prActionTarget(event interface{}) (owner, repo string, prNum int, ok bool) {
-	switch e := event.(type) {
-	case *github.PullRequestEvent:
-		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
-	case *github.PullRequestReviewEvent:
-		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
-	case *github.PullRequestReviewCommentEvent:
-		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
-	case *github.PullRequestTargetEvent:
+	type prEvent interface {
+		GetRepo() *github.Repository
+		GetPullRequest() *github.PullRequest
+	}
+	if e, ok := event.(prEvent); ok && e.GetRepo() != nil && e.GetPullRequest() != nil {
 		return e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetPullRequest().GetNumber(), true
 	}
 	return "", "", 0, false
@@ -587,19 +588,20 @@ var htmlTagRe = regexp.MustCompile(`<(/?)([a-zA-Z0-9-]+)([^>]*)>`)
 // can split a tag or leave tags unclosed, forcing Telegram to reject the
 // message and triggering the plain-text fallback (degraded formatting).
 func truncateTelegramHTML(msg string, maxRunes int) string {
-	runes := []rune(msg)
-	if len(runes) <= maxRunes {
+	if utf8.RuneCountInString(msg) <= maxRunes {
 		return msg
 	}
 
+	runes := []rune(msg)
 	const ellipsis = "…"
-	end := maxRunes - len([]rune(ellipsis))
+	const ellipsisRunes = 1
+	end := maxRunes - ellipsisRunes
 
 	// Closing tags appended after the cut also consume runes; iterate until
 	// the total fits (nesting depth is small, so this converges immediately).
 	var closers []string
 	for range 4 {
-		end = maxRunes - len([]rune(ellipsis)) - totalRunes(closers)
+		end = maxRunes - ellipsisRunes - totalRunes(closers)
 
 		// If the cut lands inside a tag, move it back to just before the tag.
 		lastOpen, lastClose := -1, -1
@@ -648,7 +650,7 @@ func truncateTelegramHTML(msg string, maxRunes int) string {
 			closers = append(closers, "</"+stack[i]+">")
 		}
 
-		if end+len([]rune(ellipsis))+totalRunes(closers) <= maxRunes {
+		if end+ellipsisRunes+totalRunes(closers) <= maxRunes {
 			break
 		}
 	}
@@ -663,7 +665,7 @@ func truncateTelegramHTML(msg string, maxRunes int) string {
 func totalRunes(parts []string) int {
 	n := 0
 	for _, p := range parts {
-		n += len([]rune(p))
+		n += utf8.RuneCountInString(p)
 	}
 	return n
 }

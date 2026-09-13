@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/google/go-github/v90/github"
@@ -232,10 +233,10 @@ func truncateText(text string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
 	}
-	runes := []rune(text)
-	if len(runes) <= maxRunes {
+	if utf8.RuneCountInString(text) <= maxRunes {
 		return text
 	}
+	runes := []rune(text)
 	return string(runes[:maxRunes-1]) + "…"
 }
 
@@ -1668,7 +1669,7 @@ func FormatDeploymentEvent(e *github.DeploymentEvent) (string, *gotgbot.InlineKe
 	}
 
 	if repo := e.GetRepo(); repo != nil {
-		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(repo.GetName()))
+		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(repo.GetFullName()))
 	}
 
 	if sender := e.GetSender(); sender != nil {
@@ -1825,7 +1826,9 @@ func FormatDeployKeyEvent(e *github.DeployKeyEvent) (string, *gotgbot.InlineKeyb
 		}
 	}
 
-	msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetName()))
+	if e.GetRepo() != nil {
+		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName()))
+	}
 
 	if sender := e.GetSender(); sender != nil {
 		msg += fmt.Sprintf("<b>By:</b> %s", FormatUser(sender.GetLogin()))
@@ -1916,7 +1919,9 @@ func FormatDeploymentStatusEvent(e *github.DeploymentStatusEvent) (string, *gotg
 		msg += fmt.Sprintf("<b>Status:</b> %s\n", FormatTextWithMarkdown(desc))
 	}
 
-	msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetName()))
+	if e.GetRepo() != nil {
+		msg += fmt.Sprintf("<b>Repository:</b> %s\n", FormatRepo(e.GetRepo().GetFullName()))
+	}
 
 	if sender := e.GetSender(); sender != nil {
 		msg += fmt.Sprintf("<b>By:</b> %s", FormatUser(sender.GetLogin()))
