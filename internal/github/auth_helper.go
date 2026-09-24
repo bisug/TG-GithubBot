@@ -38,5 +38,5 @@ func GetClientForUser(ctx context.Context, database *db.DB, factory *ClientFacto
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
 
-	return factory.GetUserClient(ctx, token), nil
+	return factory.GetUserClient(token), nil
 }

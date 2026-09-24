@@ -1,7 +1,6 @@
 package github
 
 import (
-	"context"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -34,7 +33,7 @@ func NewClientFactory() *ClientFactory {
 
 // GetUserClient returns a GitHub client authenticated as a specific User (via OAuth token).
 // Clients are cached per access token to reuse the underlying TCP connections.
-func (f *ClientFactory) GetUserClient(_ context.Context, accessToken string) *github.Client {
+func (f *ClientFactory) GetUserClient(accessToken string) *github.Client {
 	if v, ok := f.clients.Load(accessToken); ok {
 		cc := v.(*cachedClient)
 		cc.lastUsed.Store(time.Now().UnixNano())

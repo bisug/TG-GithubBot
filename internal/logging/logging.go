@@ -27,8 +27,8 @@ func (w *stdlibWriter) Write(p []byte) (int, error) {
 
 // Setup configures the global slog JSON logger (level configurable via the
 // LOG_LEVEL env var: debug, info, warn, error — default info), redirects the
-// stdlib log package into slog, and returns the new logger.
-func Setup() *slog.Logger {
+// stdlib log package into slog.
+func Setup() {
 	var level slog.Level
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {
 	case "debug":
@@ -48,6 +48,4 @@ func Setup() *slog.Logger {
 	// (ours or a dependency's) is routed into slog as a warning.
 	log.SetFlags(0)
 	log.SetOutput(&stdlibWriter{logger: logger})
-
-	return logger
 }

@@ -19,11 +19,10 @@ import (
 )
 
 type DB struct {
-	Client   *mongo.Client
-	Database *mongo.Database
-	Users    *mongo.Collection
-	Chats    *mongo.Collection
-	MsgCtx   *mongo.Collection
+	Client *mongo.Client
+	Users  *mongo.Collection
+	Chats  *mongo.Collection
+	MsgCtx *mongo.Collection
 
 	ChatReposCache *cache.Cache[int64, []models.RepoLink]
 }
@@ -66,7 +65,6 @@ func Connect(cfg *config.Config) (*DB, error) {
 
 	d := &DB{
 		Client:         client,
-		Database:       db,
 		Users:          db.Collection("users"),
 		Chats:          db.Collection("chats"),
 		MsgCtx:         db.Collection("message_contexts"),
@@ -74,6 +72,9 @@ func Connect(cfg *config.Config) (*DB, error) {
 	}
 
 	if err := d.createIndexes(); err != nil {
+		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = client.Disconnect(disconnectCtx)
 		return nil, err
 	}
 
@@ -84,16 +85,9 @@ func (d *DB) createIndexes() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := d.Chats.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "links.repo_full_name", Value: 1}},
-	})
-
-	if err != nil {
-		return err
-	}
-
-	_, err = d.Chats.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{Key: "links.webhook_id", Value: 1}},
+	_, err := d.Chats.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "links.repo_full_name", Value: 1}}},
+		{Keys: bson.D{{Key: "links.webhook_id", Value: 1}}},
 	})
 	if err != nil {
 		return err

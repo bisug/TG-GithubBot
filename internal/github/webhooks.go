@@ -34,8 +34,6 @@ const (
 	maxConcurrentDeliveries = 64
 )
 
-var multipleNewlinesRegex = regexp.MustCompile(`\n{3,}`)
-
 type WebhookServer struct {
 	Config            *config.Config
 	DB                *db.DB
@@ -689,7 +687,7 @@ func normalizeMessage(s string) string {
 	}
 	out := strings.Join(lines, "\n")
 
-	out = multipleNewlinesRegex.ReplaceAllString(out, "\n\n")
+	out = consecutiveNewlinesRe.ReplaceAllString(out, "\n\n")
 
 	out = strings.TrimSpace(out)
 	return out

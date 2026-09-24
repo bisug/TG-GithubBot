@@ -249,7 +249,7 @@ func run() (runErr error) {
 				return
 			}
 
-			ghClient := clientFactory.GetUserClient(ctx, token.AccessToken)
+			ghClient := clientFactory.GetUserClient(token.AccessToken)
 			u, _, err := ghClient.Users.Get(ctx, "")
 			if err != nil {
 				slog.Error("OAuth fetch user failed", "telegram_id", telegramID, "error", err)
