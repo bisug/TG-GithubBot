@@ -162,10 +162,21 @@ func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pat
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
 
+	// Reject before starting background work. Acquire after spawning would leave
+	// an unbounded number of goroutines parked on this semaphore.
+	select {
+	case s.sem <- struct{}{}:
+	default:
+		slog.Warn("Webhook server busy; asking GitHub to retry", "event", eventType, "delivery", deliveryID, "hook_id", hookID, "chat", chatID)
+		http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	if deliveryID != "" {
 		// Atomic claim: two racing deliveries with the same X-GitHub-Delivery
 		// cannot both pass a check-then-set here.
 		if !s.DeliverySeen.AddIfAbsent(deliveryID, struct{}{}, 10*time.Minute) {
+			<-s.sem
 			slog.Info("Webhook duplicate delivery ignored", "event", eventType, "delivery", deliveryID, "chat", chatID)
 			w.WriteHeader(http.StatusOK)
 			return
@@ -175,9 +186,6 @@ func (s *WebhookServer) serveWebhook(w http.ResponseWriter, r *http.Request, pat
 	s.Wg.Add(1)
 	go func() {
 		defer s.Wg.Done()
-		// Bound concurrent deliveries; a full semaphore parks this goroutine here
-		// (cheap) instead of letting thousands pile up inside the Pacer.
-		s.sem <- struct{}{}
 		defer func() { <-s.sem }()
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -345,13 +353,14 @@ func (s *WebhookServer) sendMessageWithRetry(chatID int64, msg string, opts *got
 			slog.Warn("HTML send failed; retrying plain text", "chat", chatID, "event", eventType, "delivery", deliveryID, "error", err)
 			fallbackOpts := &gotgbot.SendMessageOpts{
 				LinkPreviewOptions: opts.LinkPreviewOptions,
-				ReplyMarkup:        opts.ReplyMarkup,
-				MessageThreadId:    opts.MessageThreadId,
-				RequestOpts:        opts.RequestOpts,
+				// Markup can be the source of a 400, and plain-text fallback has
+				// no usable inline keyboard.
+				MessageThreadId: opts.MessageThreadId,
+				RequestOpts:     opts.RequestOpts,
 			}
 			sent, fallbackErr := s.Bot.SendMessage(chatID, StripTelegramHTML(msg), fallbackOpts)
 			if fallbackErr != nil {
-				slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "error", err)
+				slog.Error("Error sending message", "chat", chatID, "event", eventType, "delivery", deliveryID, "elapsed_ms", time.Since(receivedAt).Milliseconds(), "error", fallbackErr)
 				return nil, fallbackErr
 			}
 			return sent, nil

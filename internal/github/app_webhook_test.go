@@ -103,6 +103,34 @@ func TestAppWebhookRejectsInvalidToken(t *testing.T) {
 	}
 }
 
+func TestWebhookReturnsRetryableStatusWhenBusy(t *testing.T) {
+	s, token, _ := newAppWebhookTestServer(t)
+	for i := 0; i < cap(s.sem); i++ {
+		s.sem <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(s.sem); i++ {
+			<-s.sem
+		}
+	}()
+
+	payload := []byte(`{"action":"created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/app-webhook/"+token, strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "installation")
+	req.Header.Set("X-GitHub-Delivery", "busy-delivery")
+	req.Header.Set("X-Hub-Signature-256", signBody("app-secret", payload))
+
+	rec := httptest.NewRecorder()
+	s.AppHandler(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("busy server returned %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if _, seen := s.DeliverySeen.Get("busy-delivery"); seen {
+		t.Fatal("rejected delivery was incorrectly marked as processed")
+	}
+}
+
 func TestRepoWebhookStillUsesRepoSecret(t *testing.T) {
 	s, token, _ := newAppWebhookTestServer(t)
 

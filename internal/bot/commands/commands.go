@@ -186,6 +186,12 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Invalid repository format.</b>\nUse <code>owner/repo</code>, for example <code>octocat/hello-world</code>.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
+	if _, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName); err == nil {
+		_, _ = ctx.EffectiveMessage.Reply(b, "ℹ️ This repository is already linked in this chat.", nil)
+		return nil
+	} else if !errors.Is(err, db.ErrLinkNotFound) {
+		return err
+	}
 
 	// Verify repository existence
 	_, _, getErr := client.Repositories.Get(context.Background(), owner, repo)
@@ -246,7 +252,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		MessageThreadID: ctx.EffectiveMessage.MessageThreadId,
 	}
 
-	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
+	added, err := h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
 		// The GitHub webhook already exists; if we fail to persist the link it
 		// becomes an orphan the user cannot remove via the bot. Best-effort
@@ -255,6 +261,13 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 			slog.Error("Failed to clean up orphaned webhook after DB error", "repo", repoFullName, "hook_id", webhookID, "error", delErr)
 		}
 		_, err := ctx.EffectiveMessage.Reply(b, "❌ <b>Error linking repository.</b> Please try again.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		return err
+	}
+	if !added {
+		if _, delErr := client.Repositories.DeleteHook(context.Background(), owner, repo, webhookID); delErr != nil {
+			slog.Warn("Failed to remove duplicate webhook", "repo", repoFullName, "hook_id", webhookID, "error", delErr)
+		}
+		_, err := ctx.EffectiveMessage.Reply(b, "ℹ️ This repository is already linked in this chat.", nil)
 		return err
 	}
 
@@ -495,7 +508,7 @@ func (h *CommandHandler) removeGitHubWebhookQuietly(b *gotgbot.Bot, ctx *ext.Con
 		}
 		// 404 means the webhook is already gone from GitHub — nothing to warn about.
 		if !gh.IsNotFoundError(err) {
-			return fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
+			return fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %s", html.EscapeString(err.Error()))
 		}
 	}
 	return ""
@@ -577,6 +590,15 @@ If you have questions or concerns, please visit our <a href="https://github.com/
 	return err
 }
 
+func (h *CommandHandler) Reload(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ctx.EffectiveChat == nil || ctx.EffectiveUser == nil {
+		return nil
+	}
+	utils.InvalidateAdmin(ctx.EffectiveChat.Id, ctx.EffectiveUser.Id)
+	_, err := ctx.EffectiveMessage.Reply(b, "✅ Administrator status cache refreshed.", nil)
+	return err
+}
+
 func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 	err := h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 	if err != nil {
@@ -629,7 +651,7 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to approve:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to approve:</b> %s", html.EscapeString(err.Error())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -658,7 +680,7 @@ func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to merge:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to merge:</b> %s", html.EscapeString(err.Error())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 
@@ -737,7 +759,7 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to update the issue/PR:</b> %v", err), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, _ = msg.Reply(b, fmt.Sprintf("❌ <b>Failed to update the issue/PR:</b> %s", html.EscapeString(err.Error())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 		return nil
 	}
 

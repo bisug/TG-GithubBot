@@ -25,6 +25,7 @@ func CleanupChatUpsertSeen() {
 func TrackUserAndChat(database *db.DB) func(b *gotgbot.Bot, ctx *ext.Context) error {
 	return func(b *gotgbot.Bot, ctx *ext.Context) error {
 		if ctx.EffectiveChat != nil {
+			ctxChatID := ctx.EffectiveChat.Id
 			chatType := ctx.EffectiveChat.Type
 			dbChat := &models.Chat{
 				ID:       ctx.EffectiveChat.Id,
@@ -35,14 +36,18 @@ func TrackUserAndChat(database *db.DB) func(b *gotgbot.Bot, ctx *ext.Context) er
 				dbChat.Title = ctx.EffectiveChat.Username
 			}
 
-			if !chatUpsertSeen.AddIfAbsent(ctx.EffectiveChat.Id, struct{}{}, 10*time.Minute) {
+			if !chatUpsertSeen.AddIfAbsent(ctxChatID, struct{}{}, 10*time.Minute) {
 				return nil
 			}
 
 			go func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				_ = database.UpsertChat(ctx, dbChat)
+				if err := database.UpsertChat(ctx, dbChat); err != nil {
+					// Allow a later update to retry instead of suppressing chat
+					// metadata changes for the full debounce window.
+					chatUpsertSeen.Delete(ctxChatID)
+				}
 			}()
 		}
 		return nil

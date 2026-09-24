@@ -354,7 +354,7 @@ func (h *CallbackHandler) handleStopNotifications(b *gotgbot.Bot, ctx *ext.Conte
 					}
 
 					if !github.IsNotFoundError(err) {
-						warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %v", err)
+						warning = fmt.Sprintf("\n\nWarning: failed to remove the GitHub webhook automatically: %s", html.EscapeString(err.Error()))
 					}
 				}
 			}
@@ -692,6 +692,13 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Repo not found or access denied.", ShowAlert: true})
 		return nil
 	}
+	if _, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repo.GetFullName()); err == nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "This repository is already linked in this chat."})
+		return nil
+	} else if !errors.Is(err, db.ErrLinkNotFound) {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to check linked repositories.", ShowAlert: true})
+		return nil
+	}
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
 	if encErr != nil {
@@ -718,7 +725,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		if h.handleAuthError(b, ctx, hookErr) {
 			return nil
 		}
-		msg := fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr)
+		msg := fmt.Sprintf("Webhook creation failed: %s. Check permissions", html.EscapeString(hookErr.Error()))
 		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: msg, ParseMode: "HTML"})
 		return nil
 	}
@@ -730,7 +737,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		MessageThreadID: ctx.EffectiveMessage.MessageThreadId,
 	}
 
-	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
+	added, err := h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
 		// The GitHub webhook already exists; if we fail to persist the link it
 		// becomes an orphan the user cannot remove via the bot. Best-effort
@@ -739,6 +746,13 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 			slog.Error("Failed to clean up orphaned webhook after DB error", "repo", repo.GetFullName(), "hook_id", webhookID, "error", delErr)
 		}
 		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Error linking repository."})
+		return nil
+	}
+	if !added {
+		if _, delErr := client.Repositories.DeleteHook(context.Background(), repo.GetOwner().GetLogin(), repo.GetName(), webhookID); delErr != nil {
+			slog.Warn("Failed to remove duplicate webhook", "repo", repo.GetFullName(), "hook_id", webhookID, "error", delErr)
+		}
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "This repository is already linked in this chat."})
 		return nil
 	}
 
@@ -879,6 +893,15 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	if err != nil {
 		return nil
 	}
+
+	// Consume only after authorization and connectivity checks pass, but before
+	// the external mutation so concurrent taps cannot execute it twice.
+	claimed, ok := h.ActionCache.Consume(actionID)
+	if !ok || claimed != prContext {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Action expired. Please open the PR link manually.", ShowAlert: true})
+		return nil
+	}
+
 	ctxBg, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -903,6 +926,9 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	}
 
 	if err != nil {
+		// Preserve the existing retry behavior for a request that did not
+		// complete. Successful actions remain single-use.
+		h.ActionCache.Set(actionID, prContext, 48*time.Hour)
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
@@ -911,7 +937,6 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 	}
 
 	_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: msg, ShowAlert: true})
-	h.ActionCache.Delete(actionID)
 	return nil
 }
 

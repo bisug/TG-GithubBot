@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github-webhook/internal/config"
@@ -25,6 +26,7 @@ type DB struct {
 	MsgCtx *mongo.Collection
 
 	ChatReposCache *cache.Cache[int64, []models.RepoLink]
+	chatLinksMu    [64]sync.Mutex // bounded stripes serialize cache fills and link writes
 }
 
 // ErrLinkNotFound is returned by GetRepoLink/GetRepoLinkByWebhookID when the
@@ -210,8 +212,12 @@ func (d *DB) UpsertChat(ctx context.Context, chat *models.Chat) error {
 	return err
 }
 
-// AddRepoLink adds a repository link to a chat
-func (d *DB) AddRepoLink(ctx context.Context, chatID int64, link models.RepoLink) error {
+// AddRepoLink adds a repository link unless the repository is already linked.
+// It returns false when an existing link was preserved.
+func (d *DB) AddRepoLink(ctx context.Context, chatID int64, link models.RepoLink) (bool, error) {
+	defer d.lockChatLinks(chatID)()
+	d.invalidateChatLinks(chatID)
+
 	filter := bson.M{"_id": chatID}
 	update := mongo.Pipeline{
 		{{
@@ -219,33 +225,42 @@ func (d *DB) AddRepoLink(ctx context.Context, chatID int64, link models.RepoLink
 			Value: bson.D{{
 				Key: "links",
 				Value: bson.D{{
-					Key: "$concatArrays",
+					Key: "$cond",
 					Value: bson.A{
+						bson.D{{Key: "$in", Value: bson.A{
+							link.RepoFullName,
+							bson.D{{Key: "$ifNull", Value: bson.A{"$links.repo_full_name", bson.A{}}}},
+						}}},
+						"$links",
 						bson.D{{
-							Key: "$filter",
-							Value: bson.D{
-								{Key: "input", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$links", bson.A{}}}}},
-								{Key: "as", Value: "link"},
-								{Key: "cond", Value: bson.D{{Key: "$ne", Value: bson.A{"$$link.repo_full_name", link.RepoFullName}}}},
+							Key: "$concatArrays",
+							Value: bson.A{
+								bson.D{{
+									Key:   "$ifNull",
+									Value: bson.A{"$links", bson.A{}},
+								}},
+								bson.A{link},
 							},
 						}},
-						bson.A{link},
 					},
 				}},
 			}},
 		}},
 	}
-	_, err := d.Chats.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
+	result, err := d.Chats.UpdateOne(ctx, filter, update, options.UpdateOne().SetUpsert(true))
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	d.ChatReposCache.Delete(chatID)
-	return nil
+	d.invalidateChatLinks(chatID)
+	return result.ModifiedCount > 0 || result.UpsertedCount > 0, nil
 }
 
 // RemoveRepoLink removes a repository link from a chat
 func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName string) error {
+	defer d.lockChatLinks(chatID)()
+	d.invalidateChatLinks(chatID)
+
 	filter := bson.M{"_id": chatID}
 	update := bson.M{
 		"$pull": bson.M{"links": bson.M{"repo_full_name": repoFullName}},
@@ -255,7 +270,7 @@ func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName stri
 		return err
 	}
 
-	d.ChatReposCache.Delete(chatID)
+	d.invalidateChatLinks(chatID)
 	return nil
 }
 
@@ -263,7 +278,10 @@ func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName stri
 // is permanently unreachable, e.g. the bot was blocked). Returns the removed
 // links so callers can attempt GitHub-side webhook cleanup.
 func (d *DB) RemoveChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink, error) {
-	links, err := d.GetChatLinks(ctx, chatID)
+	defer d.lockChatLinks(chatID)()
+	d.invalidateChatLinks(chatID)
+
+	links, err := d.getChatLinks(ctx, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,17 +289,32 @@ func (d *DB) RemoveChatLinks(ctx context.Context, chatID int64) ([]models.RepoLi
 		return nil, nil
 	}
 
-	_, err = d.Chats.UpdateOne(ctx, bson.M{"_id": chatID}, bson.M{"$set": bson.M{"links": bson.A{}}})
+	// Pull only the exact links observed above. A concurrent AddRepoLink must
+	// not be erased merely because it committed between this read and update.
+	identities := make(bson.A, 0, len(links))
+	for _, link := range links {
+		identity := bson.M{"repo_full_name": link.RepoFullName}
+		if link.WebhookID != 0 {
+			identity["webhook_id"] = link.WebhookID
+		}
+		identities = append(identities, bson.M{"$or": bson.A{identity}})
+	}
+	_, err = d.Chats.UpdateOne(ctx, bson.M{"_id": chatID}, bson.M{"$pull": bson.M{"links": bson.M{"$or": identities}}})
 	if err != nil {
 		return nil, err
 	}
 
-	d.ChatReposCache.Delete(chatID)
+	d.invalidateChatLinks(chatID)
 	return links, nil
 }
 
-// GetChatLinks returns all repository links for a chat
+// GetChatLinks returns all repository links for a chat.
 func (d *DB) GetChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink, error) {
+	defer d.lockChatLinks(chatID)()
+	return d.getChatLinks(ctx, chatID)
+}
+
+func (d *DB) getChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink, error) {
 	if cached, ok := d.ChatReposCache.Get(chatID); ok {
 		return cached, nil
 	}
@@ -296,6 +329,18 @@ func (d *DB) GetChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink,
 
 	d.ChatReposCache.Set(chatID, chat.Links, 30*time.Minute)
 	return chat.Links, nil
+}
+
+// lockChatLinks serializes cache fills and link mutations for one chat.
+func (d *DB) lockChatLinks(chatID int64) func() {
+	mu := &d.chatLinksMu[uint64(chatID)%uint64(len(d.chatLinksMu))]
+	mu.Lock()
+	return mu.Unlock
+}
+
+// invalidateChatLinks must be called while lockChatLinks is held by a writer.
+func (d *DB) invalidateChatLinks(chatID int64) {
+	d.ChatReposCache.Delete(chatID)
 }
 
 // findLink scans the chat's cached links for the first one matching match.
@@ -333,6 +378,9 @@ func (d *DB) GetRepoLinkByWebhookID(ctx context.Context, chatID int64, webhookID
 
 // UpdateRepoLinkName updates the repository name for a given webhook ID in a chat
 func (d *DB) UpdateRepoLinkName(ctx context.Context, chatID int64, webhookID int64, newRepoFullName string) error {
+	defer d.lockChatLinks(chatID)()
+	d.invalidateChatLinks(chatID)
+
 	filter := bson.M{
 		"_id":              chatID,
 		"links.webhook_id": webhookID,
@@ -350,7 +398,5 @@ func (d *DB) UpdateRepoLinkName(ctx context.Context, chatID int64, webhookID int
 		return errors.New("no matching link found to update")
 	}
 
-	// Evict the cached links; the next read repopulates from the database.
-	d.ChatReposCache.Delete(chatID)
 	return nil
 }

@@ -28,6 +28,12 @@ func CleanupAdminCache() {
 	adminCache.Cleanup()
 }
 
+// InvalidateAdmin removes the cached permission for one chat/user pair so the
+// next check contacts Telegram.
+func InvalidateAdmin(chatID, userID int64) {
+	adminCache.Delete(adminKey{chatID, userID})
+}
+
 // IsAdmin reports whether userID is an administrator or the creator of chatID.
 // Results are cached briefly to avoid one Telegram API call per interaction.
 func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64) bool {
