@@ -522,7 +522,7 @@ func resolveOAuthState(state string, stateCache *cache.Cache[string, int64], enc
 		return 0, fmt.Errorf("invalid state timestamp")
 	}
 
-	if time.Since(time.Unix(createdAt, 0)) > 10*time.Minute {
+	if time.Since(time.Unix(createdAt, 0)) > 10*time.Minute || createdAt > time.Now().Unix() {
 		return 0, fmt.Errorf("state expired")
 	}
 

@@ -86,6 +86,17 @@ func TestTruncateTelegramHTMLCutInsideTag(t *testing.T) {
 	}
 }
 
+func TestTruncateTelegramHTMLSmallLimit(t *testing.T) {
+	for limit := 1; limit <= 8; limit++ {
+		msg := "<b><i>abcdefghij</i></b>"
+		got := truncateTelegramHTML(msg, limit)
+		if n := len([]rune(got)); n > limit {
+			t.Errorf("limit %d produced %d runes: %q", limit, n, got)
+		}
+		wellFormedEnding(t, got)
+	}
+}
+
 func TestTruncateTelegramHTMLCutInsideEntity(t *testing.T) {
 	// Force the boundary to fall inside an escaped entity: the "&amp;" starts
 	// at rune 4092, so the initial cut at 4095 lands mid-entity ("&am").

@@ -145,6 +145,14 @@ func toggleEvent(events []string, evt string) []string {
 	return newEvents
 }
 
+func parsePositiveInt(raw string) (int, bool) {
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, false
+	}
+	return value, true
+}
+
 func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveChat == nil || ctx.EffectiveUser == nil {
 		return nil
@@ -183,11 +191,19 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			}
 			subAction := parts[2]
 			if subAction == "pg" {
-				page, _ := strconv.Atoi(parts[3])
+				page, ok := parsePositiveInt(parts[3])
+				if !ok {
+					_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid page."})
+					return nil
+				}
 				return h.handleRepoPage(b, ctx, page)
 			}
 			if subAction == "id" {
-				repoID, _ := strconv.ParseInt(parts[3], 10, 64)
+				repoID, err := strconv.ParseInt(parts[3], 10, 64)
+				if err != nil || repoID <= 0 {
+					_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid repository ID."})
+					return nil
+				}
 				return h.handleAddRepoByID(b, ctx, repoID)
 			}
 			if subAction == "search" {
@@ -212,12 +228,13 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return h.showRepoMenu(b, ctx, link)
 		}
 
-		if action == cbToggleEvent && len(parts) >= 4 {
+		if action == cbToggleEvent && len(parts) == 5 {
 			// c:te:linkID:shortEvt:page
 			shortEvt := parts[3]
-			page := 1
-			if len(parts) == 5 {
-				page, _ = strconv.Atoi(parts[4])
+			page, ok := parsePositiveInt(parts[4])
+			if !ok {
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid page."})
+				return nil
 			}
 
 			evt, ok := shortToEvent[shortEvt]
@@ -256,7 +273,11 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 			return h.handlePresets(b, ctx, link, mode)
 		} else if action == cbIndividual && len(parts) == 4 {
 			// c:iev:linkID:page
-			page, _ := strconv.Atoi(parts[3])
+			page, ok := parsePositiveInt(parts[3])
+			if !ok {
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Invalid page."})
+				return nil
+			}
 			return h.showIndividualEvents(b, ctx, link, page)
 		} else if action == cbStop {
 			return h.showStopNotificationsConfirm(b, ctx, link)
@@ -871,6 +892,10 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 
 	action := parts[1]
 	actionID := parts[2]
+	if action != "approve" && action != "merge" && action != "close" {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown action."})
+		return nil
+	}
 
 	prContext, ok := h.ActionCache.Get(actionID)
 	if !ok {
@@ -920,9 +945,6 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 		state := "closed"
 		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: &state})
 		msg = "Closed!"
-	default:
-		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Unknown action."})
-		return nil
 	}
 
 	if err != nil {

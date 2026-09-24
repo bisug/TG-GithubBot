@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -299,10 +300,8 @@ var commentActionEmoji = map[string]string{
 func titleText(text string) string {
 	words := strings.Fields(strings.ReplaceAll(text, "_", " "))
 	for i, word := range words {
-		if word == "" {
-			continue
-		}
-		words[i] = strings.ToUpper(word[:1]) + word[1:]
+		first, size := utf8.DecodeRuneInString(word)
+		words[i] = string(unicode.ToUpper(first)) + word[size:]
 	}
 	return strings.Join(words, " ")
 }
@@ -1048,10 +1047,8 @@ func FormatSecretScanningAlertLocationEvent(e *github.SecretScanningAlertLocatio
 func FormatSecurityAndAnalysisEvent(e *github.SecurityAndAnalysisEvent) (string, *gotgbot.InlineKeyboardMarkup) {
 	repo := e.GetRepository()
 	sender := e.GetSender()
-	changes := e.Changes
-
 	var fromStatus string
-	if changes.From != nil && changes.From.SecurityAndAnalysis != nil && changes.From.GetSecurityAndAnalysis() != nil && changes.From.GetSecurityAndAnalysis().AdvancedSecurity != nil {
+	if changes := e.GetChanges(); changes != nil && changes.From != nil && changes.From.SecurityAndAnalysis != nil && changes.From.GetSecurityAndAnalysis().AdvancedSecurity != nil {
 		fromStatus = changes.From.GetSecurityAndAnalysis().AdvancedSecurity.GetStatus()
 	}
 

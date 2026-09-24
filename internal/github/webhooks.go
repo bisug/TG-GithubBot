@@ -602,8 +602,14 @@ var htmlTagRe = regexp.MustCompile(`<(/?)([a-zA-Z0-9-]+)([^>]*)>`)
 // can split a tag or leave tags unclosed, forcing Telegram to reject the
 // message and triggering the plain-text fallback (degraded formatting).
 func truncateTelegramHTML(msg string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
 	if utf8.RuneCountInString(msg) <= maxRunes {
 		return msg
+	}
+	if maxRunes == 1 {
+		return "…"
 	}
 
 	runes := []rune(msg)
@@ -611,11 +617,17 @@ func truncateTelegramHTML(msg string, maxRunes int) string {
 	const ellipsisRunes = 1
 	end := maxRunes - ellipsisRunes
 
-	// Closing tags appended after the cut also consume runes; iterate until
-	// the total fits (nesting depth is small, so this converges immediately).
+	// Closing tags appended after the cut also consume runes; recompute until
+	// the text, ellipsis, and closers fit.
 	var closers []string
-	for range 4 {
+	for {
+		if end <= 0 {
+			return ellipsis
+		}
 		end = maxRunes - ellipsisRunes - totalRunes(closers)
+		if end <= 0 {
+			return ellipsis
+		}
 
 		// If the cut lands inside a tag, move it back to just before the tag.
 		lastOpen, lastClose := -1, -1

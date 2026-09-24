@@ -28,6 +28,26 @@ func TestFormatPushEventIncludesZeroCommitBranchChanges(t *testing.T) {
 	}
 }
 
+func TestTitleTextPreservesUnicode(t *testing.T) {
+	for input, want := range map[string]string{
+		"opened":    "Opened",
+		"élan_移动":   "Élan 移动",
+		"Straße":    "Straße",
+		"🚀launched": "🚀launched",
+	} {
+		if got := titleText(input); got != want {
+			t.Errorf("titleText(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestFormatSecurityAndAnalysisMalformedPayload(t *testing.T) {
+	msg, _ := FormatSecurityAndAnalysisEvent(&gh.SecurityAndAnalysisEvent{})
+	if !strings.Contains(msg, "Security & Analysis Settings Updated") {
+		t.Fatalf("malformed payload should still format safely, got %q", msg)
+	}
+}
+
 func TestFormatPushEventCapsCommitListAndUsesFirstLine(t *testing.T) {
 	commits := make([]*gh.HeadCommit, 12)
 	for i := range commits {

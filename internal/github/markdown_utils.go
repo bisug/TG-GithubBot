@@ -3,6 +3,7 @@ package github
 import (
 	"fmt"
 	"html"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -19,10 +20,6 @@ var (
 	fenceTildeRe = regexp.MustCompile("(?s)~~~([a-zA-Z0-9_+-]*)[ \t]*\n?(.*?)~~~")
 	// inlineCodeRe matches `inline code` spans.
 	inlineCodeRe = regexp.MustCompile("`([^`\n]+)`")
-	// mdImgRe matches ![alt](url) images.
-	mdImgRe = regexp.MustCompile(`!\[([^\]\n]*)\]\(([^)\s]+)\)`)
-	// mdLinkRe matches [text](url) links.
-	mdLinkRe = regexp.MustCompile(`\[([^\]\n]+)\]\(([^)\s]+)\)`)
 	// Header regex: # Header through ###### Header at line start.
 	headerRe = regexp.MustCompile(`(?m)^#{1,6}[ \t]+(.+)$`)
 	// Task lists: - [x] or - [ ] at start of line.
@@ -73,6 +70,12 @@ func MarkdownToTelegramHTML(body string) string {
 	// -------------------------------------------------------------------------
 	// Phase 1: Code block protection (tokens avoid interference from markdown passes)
 	// -------------------------------------------------------------------------
+	// Choose a token prefix absent from the input so attacker-controlled NUL/text
+	// cannot imitate a placeholder and have generated HTML inserted into it.
+	tokenPrefix := "\x00TG"
+	for strings.Contains(body, tokenPrefix) {
+		tokenPrefix += "_"
+	}
 	var fences []string
 	extractFence := func(lang, code string) string {
 		cleanCode := EscapeHTML(strings.Trim(code, "\r\n"))
@@ -84,7 +87,7 @@ func MarkdownToTelegramHTML(body string) string {
 			block = "<pre>" + cleanCode + "</pre>"
 		}
 		fences = append(fences, block)
-		return fmt.Sprintf("\x00FENCE%d\x00", len(fences)-1)
+		return fmt.Sprintf("%sFENCE%d\x00", tokenPrefix, len(fences)-1)
 	}
 
 	protected := fenceBacktickRe.ReplaceAllStringFunc(body, func(m string) string {
@@ -100,7 +103,7 @@ func MarkdownToTelegramHTML(body string) string {
 	protected = inlineCodeRe.ReplaceAllStringFunc(protected, func(m string) string {
 		sub := inlineCodeRe.FindStringSubmatch(m)
 		codes = append(codes, "<code>"+EscapeHTML(sub[1])+"</code>")
-		return fmt.Sprintf("\x00CODE%d\x00", len(codes)-1)
+		return fmt.Sprintf("%sCODE%d\x00", tokenPrefix, len(codes)-1)
 	})
 
 	// -------------------------------------------------------------------------
@@ -150,17 +153,8 @@ func MarkdownToTelegramHTML(body string) string {
 	// -------------------------------------------------------------------------
 	// Phase 4: Inline markdown structures
 	// -------------------------------------------------------------------------
-	// Images: ![alt](url) -> <a href="url">🖼️ alt</a>
-	protected = mdImgRe.ReplaceAllStringFunc(protected, func(m string) string {
-		sub := mdImgRe.FindStringSubmatch(m)
-		alt := strings.TrimSpace(sub[1])
-		if alt == "" {
-			alt = "Image"
-		}
-		return fmt.Sprintf(`<a href="%s">🖼️ %s</a>`, sub[2], alt)
-	})
-	// Links: [text](url) -> <a href="url">text</a>
-	protected = mdLinkRe.ReplaceAllString(protected, `<a href="$2">$1</a>`)
+	// Links and images: [text](url), ![alt](url).
+	protected = replaceMarkdownDestinations(protected)
 
 	// Bold & Italic
 	protected = boldItalicStarRe.ReplaceAllString(protected, "<b><i>$1</i></b>")
@@ -177,10 +171,10 @@ func MarkdownToTelegramHTML(body string) string {
 	if len(codes) > 0 || len(fences) > 0 {
 		repls := make([]string, 0, (len(codes)+len(fences))*2)
 		for i, c := range codes {
-			repls = append(repls, fmt.Sprintf("\x00CODE%d\x00", i), c)
+			repls = append(repls, fmt.Sprintf("%sCODE%d\x00", tokenPrefix, i), c)
 		}
 		for i, f := range fences {
-			repls = append(repls, fmt.Sprintf("\x00FENCE%d\x00", i), f)
+			repls = append(repls, fmt.Sprintf("%sFENCE%d\x00", tokenPrefix, i), f)
 		}
 		protected = strings.NewReplacer(repls...).Replace(protected)
 	}
@@ -193,6 +187,118 @@ func MarkdownToTelegramHTML(body string) string {
 }
 
 // FormatTextWithMarkdown renders a GitHub markdown body as Telegram HTML.
+func replaceMarkdownDestinations(s string) string {
+	var out strings.Builder
+	for pos := 0; pos < len(s); {
+		start := strings.IndexByte(s[pos:], '[')
+		if start < 0 {
+			out.WriteString(s[pos:])
+			break
+		}
+		start += pos
+		image := start > 0 && s[start-1] == '!'
+		if image {
+			start--
+		}
+
+		textEnd := strings.IndexByte(s[start+1:], ']')
+		if textEnd < 0 || strings.ContainsAny(s[start+1:start+1+textEnd], "\n") {
+			out.WriteString(s[pos : start+1])
+			pos = start + 1
+			continue
+		}
+		textEnd += start + 1
+
+		open := textEnd + 1
+		if open >= len(s) || s[open] != '(' {
+			out.WriteString(s[pos:open])
+			pos = open
+			continue
+		}
+		depth := 1
+		escaped := false
+		closeAt := -1
+		for i := open + 1; i < len(s); i++ {
+			ch := s[i]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			switch ch {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					closeAt = i
+				}
+			}
+			if closeAt >= 0 {
+				break
+			}
+		}
+
+		textStart := start + 1
+		if image {
+			textStart++
+		}
+		text := s[textStart:textEnd]
+		if closeAt < 0 || (text == "" && !image) {
+			out.WriteString(s[pos:open])
+			pos = open
+			continue
+		}
+		destination := s[open+1 : closeAt]
+		if strings.ContainsAny(destination, " \t\r\n") || !supportedMarkdownURL(html.UnescapeString(destination)) {
+			out.WriteString(s[pos:open])
+			pos = open
+			continue
+		}
+
+		out.WriteString(s[pos:start])
+		if image {
+			alt := strings.TrimSpace(text)
+			if alt == "" {
+				alt = "Image"
+			}
+			fmt.Fprintf(&out, `<a href="%s">🖼️ %s</a>`, destination, alt)
+		} else {
+			fmt.Fprintf(&out, `<a href="%s">%s</a>`, destination, text)
+		}
+		pos = closeAt + 1
+	}
+	return out.String()
+}
+
+func supportedMarkdownURL(raw string) bool {
+	if strings.HasPrefix(strings.ToLower(raw), "mailto:") {
+		return supportedMailtoURL(raw)
+	}
+	return supportedButtonURL(raw)
+}
+
+func supportedButtonURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "tg":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportedMailtoURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && strings.EqualFold(parsed.Scheme, "mailto") && (parsed.Opaque != "" || parsed.Path != "")
+}
+
 func FormatTextWithMarkdown(body string) string {
 	if body == "" {
 		return ""
@@ -240,7 +346,7 @@ func StripTelegramHTML(s string) string {
 }
 
 func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *gotgbot.InlineKeyboardMarkup) {
-	if buttonText == "" || buttonURL == "" {
+	if buttonText == "" || !supportedButtonURL(buttonURL) {
 		return message, nil
 	}
 	return message, &gotgbot.InlineKeyboardMarkup{

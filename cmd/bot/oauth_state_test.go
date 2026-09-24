@@ -66,4 +66,11 @@ func TestResolveOAuthState(t *testing.T) {
 	if _, err := resolveOAuthState(encInvalidID, stateCache, encKey); err == nil || !strings.Contains(err.Error(), "invalid telegram id") {
 		t.Fatalf("expected invalid telegram id error, got: %v", err)
 	}
+
+	// 8. Timestamp too far in the future
+	futurePayload := fmt.Sprintf("98765:%d:nonce", time.Now().Add(15*time.Minute).Unix())
+	encFuture, _ := utils.Encrypt(futurePayload, encKey)
+	if _, err := resolveOAuthState(encFuture, stateCache, encKey); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("expected future state to be rejected, got: %v", err)
+	}
 }

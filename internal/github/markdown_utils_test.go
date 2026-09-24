@@ -32,6 +32,13 @@ func TestFormatRepo(t *testing.T) {
 	}
 }
 
+func TestFormatMessageRejectsUnsupportedButtonURL(t *testing.T) {
+	message, markup := FormatMessageWithButton("message", "Open", "javascript:alert(1)")
+	if message != "message" || markup != nil {
+		t.Fatalf("unsupported button URL produced markup: %+v", markup)
+	}
+}
+
 func TestFormatUser(t *testing.T) {
 	got := FormatUser("user_name")
 	want := `<a href="https://github.com/user_name">user_name</a>`
@@ -148,6 +155,44 @@ func TestMarkdownToTelegramHTMLFencedCodeLanguage(t *testing.T) {
 	want := "<pre><code class=\"language-python\">def hello():\n    print(&#34;world&#34;)</code></pre>"
 	if got != want {
 		t.Errorf("MarkdownToTelegramHTML() = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownToTelegramHTMLRejectsPlaceholderCollision(t *testing.T) {
+	in := "before\x00CODE0\x00 after `secret`"
+	want := "before\x00CODE0\x00 after <code>secret</code>"
+	if got := MarkdownToTelegramHTML(in); got != want {
+		t.Fatalf("placeholder collision changed text: got %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownToTelegramHTMLRejectsUnsupportedURLSchemes(t *testing.T) {
+	for _, in := range []string{
+		"[click](javascript:alert(1))",
+		"![image](data:text/html,payload)",
+		"[missing host](https://)",
+		"[missing target](mailto:)",
+	} {
+		got := MarkdownToTelegramHTML(in)
+		if strings.Contains(got, "<a href=") {
+			t.Errorf("unsupported URL became an active link: %q", got)
+		}
+	}
+}
+
+func TestMarkdownToTelegramHTMLSupportsBalancedParenthesesInURL(t *testing.T) {
+	got := MarkdownToTelegramHTML("[wiki](https://example.com/a(b))")
+	want := `<a href="https://example.com/a(b)">wiki</a>`
+	if got != want {
+		t.Fatalf("balanced URL = %q, want %q", got, want)
+	}
+}
+
+func TestMarkdownToTelegramHTMLPreservesEscapedQueryURL(t *testing.T) {
+	got := MarkdownToTelegramHTML("[query](https://example.com/?a=1&b=2)")
+	want := `<a href="https://example.com/?a=1&amp;b=2">query</a>`
+	if got != want {
+		t.Fatalf("query URL = %q, want %q", got, want)
 	}
 }
 
