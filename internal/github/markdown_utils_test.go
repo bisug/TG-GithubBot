@@ -158,6 +158,14 @@ func TestMarkdownToTelegramHTMLFencedCodeLanguage(t *testing.T) {
 	}
 }
 
+func TestMarkdownToTelegramHTMLFencedCodeWithFourBackticks(t *testing.T) {
+	got := MarkdownToTelegramHTML("````go\ncode\n````")
+	want := "<pre><code class=\"language-go\">code</code></pre>"
+	if got != want {
+		t.Fatalf("four-backtick fence = %q, want %q", got, want)
+	}
+}
+
 func TestMarkdownToTelegramHTMLRejectsPlaceholderCollision(t *testing.T) {
 	in := "before\x00CODE0\x00 after `secret`"
 	want := "before\x00CODE0\x00 after <code>secret</code>"

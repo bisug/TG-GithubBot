@@ -14,10 +14,6 @@ import (
 
 // Telegram HTML supports a small tag subset; these cover everything we emit.
 var (
-	// fenceBacktickRe matches ```lang code blocks.
-	fenceBacktickRe = regexp.MustCompile("(?s)```([a-zA-Z0-9_+-]*)[ \t]*\n?(.*?)```")
-	// fenceTildeRe matches ~~~lang code blocks.
-	fenceTildeRe = regexp.MustCompile("(?s)~~~([a-zA-Z0-9_+-]*)[ \t]*\n?(.*?)~~~")
 	// inlineCodeRe matches `inline code` spans.
 	inlineCodeRe = regexp.MustCompile("`([^`\n]+)`")
 	// Header regex: # Header through ###### Header at line start.
@@ -90,14 +86,8 @@ func MarkdownToTelegramHTML(body string) string {
 		return fmt.Sprintf("%sFENCE%d\x00", tokenPrefix, len(fences)-1)
 	}
 
-	protected := fenceBacktickRe.ReplaceAllStringFunc(body, func(m string) string {
-		sub := fenceBacktickRe.FindStringSubmatch(m)
-		return extractFence(sub[1], sub[2])
-	})
-	protected = fenceTildeRe.ReplaceAllStringFunc(protected, func(m string) string {
-		sub := fenceTildeRe.FindStringSubmatch(m)
-		return extractFence(sub[1], sub[2])
-	})
+	protected := protectFences(body, '`', &fences, extractFence)
+	protected = protectFences(protected, '~', &fences, extractFence)
 
 	var codes []string
 	protected = inlineCodeRe.ReplaceAllStringFunc(protected, func(m string) string {
@@ -187,6 +177,52 @@ func MarkdownToTelegramHTML(body string) string {
 }
 
 // FormatTextWithMarkdown renders a GitHub markdown body as Telegram HTML.
+func protectFences(body string, marker byte, fences *[]string, extract func(string, string) string) string {
+	lines := strings.SplitAfter(body, "\n")
+	var out strings.Builder
+	for i := 0; i < len(lines); {
+		line := strings.TrimSuffix(strings.TrimSuffix(lines[i], "\n"), "\r")
+		leading := len(line) - len(strings.TrimLeft(line, " \t"))
+		if leading > 3 || leading >= len(line) || line[leading] != marker {
+			out.WriteString(lines[i])
+			i++
+			continue
+		}
+		openEnd := leading
+		for openEnd < len(line) && line[openEnd] == marker {
+			openEnd++
+		}
+		openCount := openEnd - leading
+		if openCount < 3 {
+			out.WriteString(lines[i])
+			i++
+			continue
+		}
+		language := strings.TrimSpace(line[openEnd:])
+		for j := i + 1; j < len(lines); j++ {
+			candidate := strings.TrimSuffix(strings.TrimSuffix(lines[j], "\n"), "\r")
+			candidateTrimmed := strings.TrimLeft(candidate, " \t")
+			if len(candidate)-len(candidateTrimmed) > 3 || candidateTrimmed == "" || candidateTrimmed[0] != marker {
+				continue
+			}
+			end := 0
+			for end < len(candidateTrimmed) && candidateTrimmed[end] == marker {
+				end++
+			}
+			if end < openCount || strings.TrimSpace(candidateTrimmed[end:]) != "" {
+				continue
+			}
+			out.WriteString(extract(language, strings.Join(lines[i+1:j], "")))
+			i = j + 1
+			goto next
+		}
+		out.WriteString(lines[i])
+		i++
+	next:
+	}
+	return out.String()
+}
+
 func replaceMarkdownDestinations(s string) string {
 	var out strings.Builder
 	for pos := 0; pos < len(s); {
