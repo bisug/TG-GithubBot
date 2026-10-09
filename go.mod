@@ -1,6 +1,6 @@
 module github-webhook
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.36
