@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/google/go-github/v91/github"
+	"github.com/google/go-github/v92/github"
 )
 
 func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboardMarkup) {

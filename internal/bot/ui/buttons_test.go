@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	gh "github.com/google/go-github/v91/github"
+	gh "github.com/google/go-github/v92/github"
 )
 
 func TestCompactButtonText(t *testing.T) {

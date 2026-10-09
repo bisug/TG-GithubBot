@@ -8,7 +8,7 @@ import (
 	"github-webhook/internal/db"
 	"github-webhook/internal/utils"
 
-	"github.com/google/go-github/v91/github"
+	"github.com/google/go-github/v92/github"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 

@@ -8,7 +8,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// This file adds typed payloads for webhook events that go-github v90 cannot
+// This file adds typed payloads for webhook events that go-github cannot
 // parse (no structs in its event mapping). They are parsed in parseWebhookEvent
 // before the generic fallback so they get rich formatting instead of the bare
 // 📬 generic card. Payload shapes per GitHub webhook docs.

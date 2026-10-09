@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	gh "github.com/google/go-github/v91/github"
+	gh "github.com/google/go-github/v92/github"
 )
 
 const (

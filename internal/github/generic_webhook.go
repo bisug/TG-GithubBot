@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	gh "github.com/google/go-github/v91/github"
+	gh "github.com/google/go-github/v92/github"
 )
 
 type GenericWebhookEvent struct {
@@ -31,7 +31,7 @@ func parseWebhookEvent(eventType string, payload []byte) (interface{}, error) {
 		return event, nil
 	}
 
-	// go-github v90 has no payload structs for these events; try the local
+	// go-github has no payload structs for these events; try the local
 	// typed definitions before falling back to the bare generic card.
 	if typed, ok := parseTypedWebhookEvent(eventType, payload); ok {
 		return typed, nil

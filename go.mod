@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.36
-	github.com/google/go-github/v91 v91.0.0
+	github.com/google/go-github/v92 v92.0.0
 	github.com/joho/godotenv v1.5.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
 	golang.org/x/oauth2 v0.37.0
