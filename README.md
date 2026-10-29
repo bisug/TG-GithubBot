@@ -120,6 +120,43 @@ OWNER_ID=123456789
     ./bot
     ```
 
+### Deploy to a PaaS
+
+The repo ships config for four platforms. All of them build the root `Dockerfile`
+(`docker go generate` then `go build -o bot .`), listen on `$PORT` (default
+`8080`), and need the following variables:
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `TELEGRAM_TOKEN` | yes | From [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_WEBHOOK_URL` | yes | Public `https://` URL of the app. There is **no polling mode**, the app exits without it |
+| `GITHUB_CLIENT_ID` | yes | GitHub OAuth App |
+| `GITHUB_CLIENT_SECRET` | yes | GitHub OAuth App |
+| `GITHUB_WEBHOOK_SECRET` | yes | Any random string |
+| `ENCRYPTION_KEY` | yes | **Exactly** 64 hex chars or 16/24/32 raw bytes (`openssl rand -hex 32`). Other lengths are rejected when a token is encrypted, so `/connect` fails |
+| `MONGODB_URI` | yes | External MongoDB (Atlas, etc.). Not the `mongo` service from `docker-compose.yml` |
+| `DATABASE_NAME` | no | Defaults to `github_bot` |
+
+After the first deploy, set `TELEGRAM_WEBHOOK_URL` to the URL the platform
+assigned your app, and point the GitHub OAuth App callback at
+`https://<your-url>/oauth/callback`.
+
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/bisug/TG-GithubBot)
+[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=git&builder=dockerfile&repository=github.com/bisug/TG-GithubBot&branch=master&name=tg-githubbot&ports=8080;http;/&env[DATABASE_NAME]=github_bot)
+
+*   **Render**: `render.yaml` is a Blueprint, so the button above configures the
+    service for you.
+*   **Heroku**: `app.json` + `heroku.yml` build the container image. Heroku routes
+    to `$PORT` automatically and only injects `PORT` at runtime.
+*   **Koyeb**: Koyeb has no repository-level deploy manifest, so use the button
+    above, or create the service manually with the Dockerfile builder, port
+    `8080`, route `/`, and the variables in the table.
+
+> The `Dockerfile` runs `go generate` against `github.com/AshokShau/gotdbot`,
+> which pulls the TDLib build dependency at image build time. That step needs
+> network access during the build, so it must run on the platform's builder.
+
 ## Usage
 
 1.  **Start the Bot**: Send `/start` in Telegram.

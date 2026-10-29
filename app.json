@@ -1,0 +1,50 @@
+{
+  "name": "TG-GithubBot",
+  "description": "Telegram bot that sends GitHub event notifications and lets you manage repositories, issues and pull requests from Telegram.",
+  "keywords": ["telegram", "github", "bot", "webhooks", "go"],
+  "website": "https://github.com/bisug/TG-GithubBot",
+  "repository": "https://github.com/bisug/TG-GithubBot",
+  "success_url": "/",
+  "stack": "container",
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "TELEGRAM_TOKEN": {
+      "description": "Bot token from @BotFather",
+      "required": true
+    },
+    "TELEGRAM_WEBHOOK_URL": {
+      "description": "Public HTTPS URL of this app, no trailing slash, e.g. https://your-app.herokuapp.com",
+      "required": true
+    },
+    "GITHUB_CLIENT_ID": {
+      "description": "Client ID of your GitHub OAuth App",
+      "required": true
+    },
+    "GITHUB_CLIENT_SECRET": {
+      "description": "Client secret of your GitHub OAuth App",
+      "required": true
+    },
+    "GITHUB_WEBHOOK_SECRET": {
+      "description": "Random string used to validate GitHub webhook payloads (openssl rand -hex 20)",
+      "generator": "secret"
+    },
+    "ENCRYPTION_KEY": {
+      "description": "Exactly 64 hex chars or 16/24/32 raw bytes for AES-GCM token encryption (openssl rand -hex 32). Do not use a generated value: other lengths are rejected at runtime.",
+      "required": true
+    },
+    "MONGODB_URI": {
+      "description": "MongoDB connection string, e.g. a MongoDB Atlas SRV URI (not the local mongo from docker-compose)",
+      "required": true
+    },
+    "DATABASE_NAME": {
+      "description": "MongoDB database name",
+      "required": false,
+      "value": "github_bot"
+    }
+  }
+}
