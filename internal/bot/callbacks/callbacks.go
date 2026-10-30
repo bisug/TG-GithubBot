@@ -257,7 +257,12 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 				return nil
 			}
 
-			return h.showIndividualEvents(c, u, link, page)
+			enabledEvents := make(map[string]bool)
+			for _, e := range newEvents {
+				enabledEvents[e] = true
+			}
+			_ = u.Answer(c, "", nil)
+			return h.editRichMessage(c, u, settings.EventsPage(link.RepoFullName, link.WebhookID, enabledEvents, page), &gotdbot.EditRichTextOpts{})
 		} else if action == "ep" && len(parts) == 4 {
 			// c:ep:repo:page
 			page, _ := strconv.Atoi(parts[3])
