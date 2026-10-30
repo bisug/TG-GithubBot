@@ -21,6 +21,7 @@ type DB struct {
 	Chats    *mongo.Collection
 
 	ChatReposCache *cache.Cache[int64, []models.RepoLink]
+	UserCache      *cache.Cache[int64, *models.User]
 }
 
 func Connect(cfg *config.Config) (*DB, error) {
@@ -38,6 +39,7 @@ func Connect(cfg *config.Config) (*DB, error) {
 		Users:          db.Collection("users"),
 		Chats:          db.Collection("chats"),
 		ChatReposCache: cache.New[int64, []models.RepoLink](),
+		UserCache:      cache.New[int64, *models.User](),
 	}
 
 	if err := d.createIndexes(); err != nil {
@@ -84,10 +86,19 @@ func (d *DB) UnmuteThread(ctx context.Context, chatID int64, threadID int32) err
 }
 
 func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
+	if d.UserCache != nil {
+		if cached, ok := d.UserCache.Get(telegramID); ok && cached != nil {
+			return cached, nil
+		}
+	}
+
 	var user models.User
 	err := d.Users.FindOne(ctx, bson.M{"_id": telegramID}).Decode(&user)
 	if err != nil {
 		return nil, err
+	}
+	if d.UserCache != nil {
+		d.UserCache.Set(telegramID, &user, 15*time.Minute)
 	}
 	return &user, nil
 }
@@ -97,6 +108,9 @@ func (d *DB) UpsertUser(ctx context.Context, user *models.User) error {
 	filter := bson.M{"_id": user.ID}
 	update := bson.M{"$set": user}
 	_, err := d.Users.UpdateOne(ctx, filter, update, opts)
+	if err == nil && d.UserCache != nil {
+		d.UserCache.Set(user.ID, user, 15*time.Minute)
+	}
 	return err
 }
 
@@ -104,6 +118,9 @@ func (d *DB) ClearUserToken(ctx context.Context, userID int64) error {
 	filter := bson.M{"_id": userID}
 	update := bson.M{"$set": bson.M{"encrypted_oauth_token": ""}}
 	_, err := d.Users.UpdateOne(ctx, filter, update)
+	if d.UserCache != nil {
+		d.UserCache.Delete(userID)
+	}
 	return err
 }
 
