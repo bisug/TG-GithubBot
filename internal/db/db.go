@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github-webhook/internal/cache"
@@ -88,7 +89,8 @@ func (d *DB) UnmuteThread(ctx context.Context, chatID int64, threadID int32) err
 func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
 	if d.UserCache != nil {
 		if cached, ok := d.UserCache.Get(telegramID); ok && cached != nil {
-			return cached, nil
+			userCopy := *cached
+			return &userCopy, nil
 		}
 	}
 
@@ -98,7 +100,8 @@ func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models
 		return nil, err
 	}
 	if d.UserCache != nil {
-		d.UserCache.Set(telegramID, &user, 15*time.Minute)
+		userCopy := user
+		d.UserCache.Set(telegramID, &userCopy, 15*time.Minute)
 	}
 	return &user, nil
 }
@@ -178,7 +181,7 @@ func (d *DB) RemoveRepoLink(ctx context.Context, chatID int64, repoFullName stri
 // GetChatLinks returns all repository links for a chat
 func (d *DB) GetChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink, error) {
 	if cached, ok := d.ChatReposCache.Get(chatID); ok {
-		return cached, nil
+		return slices.Clone(cached), nil
 	}
 
 	chat, err := d.GetChat(ctx, chatID)
@@ -189,7 +192,7 @@ func (d *DB) GetChatLinks(ctx context.Context, chatID int64) ([]models.RepoLink,
 		return nil, err
 	}
 
-	d.ChatReposCache.Set(chatID, chat.Links, 30*time.Minute)
+	d.ChatReposCache.Set(chatID, slices.Clone(chat.Links), 30*time.Minute)
 	return chat.Links, nil
 }
 

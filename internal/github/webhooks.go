@@ -165,6 +165,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := fmt.Sprintf("%d:%d:%d:%s", chatID, topicID, hookID, deliveryID)
+	completed := false
 	if deliveryID != "" {
 		state := s.beginDelivery(key)
 		if state == deliveryDone {
@@ -179,10 +180,16 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Delivery is already processing. Retry later.", http.StatusServiceUnavailable)
 			return
 		}
+		defer func() {
+			if !completed {
+				s.finishDelivery(key, false)
+			}
+		}()
 	}
 	deliveryLogger.Info("Webhook processing started")
 	sentMsg, err := s.processEvent(event, eventType, payloadBytes, chatID, int32(topicID), hookID)
 	if deliveryID != "" {
+		completed = true
 		// Muted deliveries remain eligible for explicit redelivery after /unmute.
 		s.finishDelivery(key, err == nil && sentMsg != nil)
 	}
