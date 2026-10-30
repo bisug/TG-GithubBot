@@ -45,9 +45,17 @@ func main() {
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
-		Logger:      appLogger,
-		LibraryPath: "./libtdjson.so.1.8.69",
-		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true, MessageNotFound: true},
+		Logger:             appLogger,
+		LibraryPath:        "./libtdjson.so.1.8.69",
+		AutoRetry:          &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true, MessageNotFound: true},
+		UpdateWorkers:      32,
+		UpdateQueueSize:    2000,
+		DropPendingUpdates: true,
+		TDLibOptions: &gotdbot.TDLibOptions{
+			UseQuickAck:                     true,
+			DisableNetworkStatistics:        true,
+			DisableTimeAdjustmentProtection: true,
+		},
 		ErrorHandler: func(c *gotdbot.Client, update gotdbot.TlObject, err error) error {
 			if utils.IsIgnorableTelegramError(err) {
 				return nil
