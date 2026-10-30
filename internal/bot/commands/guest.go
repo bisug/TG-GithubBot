@@ -12,11 +12,12 @@ func (h *CommandHandler) Guest(c *gotdbot.Client, u *gotdbot.UpdateNewGuestQuery
 		return nil
 	}
 
-	if c.Me == nil || c.Me().Usernames == nil || len(c.Me().Usernames.ActiveUsernames) == 0 {
+	me := c.Me()
+	if me == nil || me.Usernames == nil || len(me.Usernames.ActiveUsernames) == 0 {
 		return errors.New("cannot answer guest query: bot username is unavailable")
 	}
 
-	botURL := "https://t.me/" + c.Me().Usernames.ActiveUsernames[0]
+	botURL := "https://t.me/" + me.Usernames.ActiveUsernames[0]
 	message := `<h3>GitHub, meet Telegram</h3><p>Pull requests, issues, releases, and workflow updates in one place.</p><p>Add me to your group, connect GitHub with /connect in private, then use /addrepo in the group.</p><tg-button-row align="left"><tg-button type="url" url="` + botURL + `?startgroup=true">Add to group</tg-button><tg-button type="url" url="` + botURL + `?start=guest">Open bot</tg-button></tg-button-row>`
 	_, err := u.Answer(c, &gotdbot.InputInlineQueryResultArticle{
 		Id:    "github-introduction",

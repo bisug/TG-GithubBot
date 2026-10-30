@@ -45,6 +45,22 @@ func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.Cli
 	}
 }
 
+func (h *CallbackHandler) editRichMessage(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, text string, opts *gotdbot.EditRichTextOpts) error {
+	_, err := u.EditRichMessageHTML(c, text, opts)
+	if utils.IsIgnorableTelegramError(err) {
+		return nil
+	}
+	return err
+}
+
+func (h *CallbackHandler) editMessageText(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, text string, opts *gotdbot.EditMessageTextOpts) error {
+	_, err := u.EditMessageText(c, text, opts)
+	if utils.IsIgnorableTelegramError(err) {
+		return nil
+	}
+	return err
+}
+
 // Event aliases to compress callback data
 var eventToShort = map[string]string{}
 var shortToEvent = map[string]string{}
@@ -81,8 +97,7 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 		page, _ := strconv.Atoi(strings.TrimPrefix(u.DataString(), "c:rl:"))
 		h.MenuOwners.Set(key, owner, 30*time.Minute)
 		_ = u.Answer(c, "", nil)
-		_, err = u.EditRichMessageHTML(c, settings.LinkedRepositoryPage(links, page), &gotdbot.EditRichTextOpts{})
-		return err
+		return h.editRichMessage(c, u, settings.LinkedRepositoryPage(links, page), &gotdbot.EditRichTextOpts{})
 	}
 	if !u.IsPrivate() && !utils.IsAdmin(c, u.ChatId, u.SenderUserId, h.AdminCache) {
 		_ = u.Answer(c, "Telegram administrator access is required to change settings.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
@@ -273,8 +288,7 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 	text := "<h3>Notification settings</h3><p>" + utils.Code(l.RepoFullName) + "</p><p>Choose a preset or select individual events.</p>" +
 		fmt.Sprintf(`<tg-button-row align="left"><tg-button type="callback_data" data="c:presets:%s:push">Push only</tg-button><tg-button type="callback_data" data="c:presets:%s:all">All events</tg-button></tg-button-row><tg-button-row align="left"><tg-button type="callback_data" data="c:iev:%s:1">Choose events</tg-button><tg-button type="callback_data" data="c:ls">Repositories</tg-button></tg-button-row>`, repo, repo, repo)
 	_ = u.Answer(c, "", nil)
-	_, err := u.EditRichMessageHTML(c, text, &gotdbot.EditRichTextOpts{})
-	return err
+	return h.editRichMessage(c, u, text, &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, mode string) error {
@@ -349,8 +363,7 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 	}
 	responseText += fmt.Sprintf(`<tg-button-row align="left"><tg-button type="callback_data" data="%s">Back</tg-button></tg-button-row>`, html.EscapeString("c:r:"+key))
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditRichMessageHTML(c, responseText, &gotdbot.EditRichTextOpts{})
-	return err
+	return h.editRichMessage(c, u, responseText, &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, page int) error {
@@ -400,8 +413,7 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 	}
 
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditRichMessageHTML(c, settings.EventsPage(l.RepoFullName, l.WebhookID, enabledEvents, page), &gotdbot.EditRichTextOpts{})
-	return err
+	return h.editRichMessage(c, u, settings.EventsPage(l.RepoFullName, l.WebhookID, enabledEvents, page), &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, page int) error {
@@ -411,8 +423,7 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 		return u.Answer(c, utils.OperationError("Could not load linked repositories", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditRichMessageHTML(c, settings.RepositoryPage(links, page), &gotdbot.EditRichTextOpts{})
-	return err
+	return h.editRichMessage(c, u, settings.RepositoryPage(links, page), &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, page int) error {
@@ -453,9 +464,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 	}
 
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditRichMessageHTML(c, settings.DiscoveryPage(repos, resp, page), &gotdbot.EditRichTextOpts{})
-
-	return err
+	return h.editRichMessage(c, u, settings.DiscoveryPage(repos, resp, page), &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, repoID int64, page int) error {
@@ -487,8 +496,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
 		_ = u.Answer(c, "", nil)
-		_, err = u.EditRichMessageHTML(c, settings.RepositoryLinked(repo.GetFullName(), existingLink.WebhookID, page, true), &gotdbot.EditRichTextOpts{})
-		return err
+		return h.editRichMessage(c, u, settings.RepositoryLinked(repo.GetFullName(), existingLink.WebhookID, page, true), &gotdbot.EditRichTextOpts{})
 	}
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)
@@ -524,10 +532,9 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 		_ = u.Answer(c, "", nil)
 		c.Logger.Warnf("Webhook creation failed: %s", utils.ErrorDetails(hookErr))
-		_, err = u.EditMessageText(c, utils.OperationError("Webhook creation failed", hookErr), &gotdbot.EditMessageTextOpts{
+		return h.editMessageText(c, u, utils.OperationError("Webhook creation failed", hookErr), &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
-		return err
 	}
 
 	webhookID := createdHook.GetID()
@@ -548,8 +555,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 	}
 
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditRichMessageHTML(c, settings.RepositoryLinked(repo.GetFullName(), webhookID, page, false), &gotdbot.EditRichTextOpts{})
-	return err
+	return h.editRichMessage(c, u, settings.RepositoryLinked(repo.GetFullName(), webhookID, page, false), &gotdbot.EditRichTextOpts{})
 }
 
 func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {

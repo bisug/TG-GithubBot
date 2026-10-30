@@ -391,8 +391,9 @@ func (w *markdownWriter) WriteString(text string) {
 	}
 }
 
-func (w *markdownWriter) WriteByte(b byte) {
+func (w *markdownWriter) WriteByte(b byte) error {
 	w.WriteString(string(b))
+	return nil
 }
 
 func (w *markdownWriter) atomic(source string, units int) {
