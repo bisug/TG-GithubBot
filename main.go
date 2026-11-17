@@ -37,10 +37,25 @@ func main() {
 	clientFactory := github.NewClientFactory()
 	oauthStateCache := cache.New[string, int64]()
 	contextCache := cache.New[string, models.MessageContext]()
-	actionCache := cache.New[string, models.PRActionContext]()
 	adminCache := cache.New[int64, []int64]()
 	reloadRateLimit := cache.New[int64, time.Time]()
 	menuOwners := cache.New[[2]int64, int64]()
+
+	// Entries are only removed on lookup, so abandoned states and unreplied
+	// notifications need a sweep or the caches grow for the process lifetime.
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			oauthStateCache.Cleanup()
+			contextCache.Cleanup()
+			adminCache.Cleanup()
+			reloadRateLimit.Cleanup()
+			menuOwners.Cleanup()
+			database.ChatReposCache.Cleanup()
+			database.UserCache.Cleanup()
+		}
+	}()
 
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
@@ -178,13 +193,11 @@ func main() {
 		return nil
 	}, nil)
 
-	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache, adminCache, menuOwners)
+	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, adminCache, menuOwners)
 	bot.OnUpdateNewCallbackQuery(func(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
 		data := u.DataString()
 		if strings.HasPrefix(data, "c:") {
 			return cbHandler.HandleSettings(c, u)
-		} else if strings.HasPrefix(data, "act:") {
-			return cbHandler.HandlePRAction(c, u)
 		}
 		return u.Answer(c, "This interaction is no longer supported. Open /settings again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}, nil)

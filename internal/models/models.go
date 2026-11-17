@@ -1,16 +1,11 @@
 package models
 
-import (
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
-
 // User represents a Telegram user linked to a GitHub account
 type User struct {
-	ID                  int64    `bson:"_id" json:"telegram_id"`
-	GitHubUserID        int64    `bson:"github_user_id" json:"github_user_id"`
-	GitHubUsername      string   `bson:"github_username" json:"github_username"`
-	EncryptedOAuthToken string   `bson:"encrypted_oauth_token" json:"-"`
-	Scopes              []string `bson:"scopes" json:"scopes"`
+	ID                  int64  `bson:"_id" json:"telegram_id"`
+	GitHubUserID        int64  `bson:"github_user_id" json:"github_user_id"`
+	GitHubUsername      string `bson:"github_username" json:"github_username"`
+	EncryptedOAuthToken string `bson:"encrypted_oauth_token" json:"-"`
 }
 
 // RepoLink represents a link to a GitHub repository within a chat
@@ -26,20 +21,4 @@ type Chat struct {
 	Title        string     `bson:"title" json:"title"`
 	Links        []RepoLink `bson:"links" json:"links"`
 	MutedThreads []int64    `bson:"muted_threads,omitempty" json:"muted_threads,omitempty"`
-}
-
-// Repository represents a GitHub repository where the App is installed
-type Repository struct {
-	ID             bson.ObjectID `bson:"_id,omitempty"`
-	Owner          string        `bson:"owner" json:"owner"`
-	Name           string        `bson:"name" json:"name"`
-	FullName       string        `bson:"full_name" json:"full_name"`
-	InstallationID int64         `bson:"installation_id" json:"installation_id"`
-}
-
-// PRActionContext stores metadata for PR actions to avoid large callback payloads
-type PRActionContext struct {
-	Owner    string
-	Repo     string
-	PRNumber int
 }

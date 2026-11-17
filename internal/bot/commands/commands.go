@@ -144,7 +144,6 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
 		sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryLinked(repoFullName, existingLink.WebhookID, 1, true), nil)
 		if err == nil {
-			h.MenuOwners.Cleanup()
 			h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 		}
 		return err
@@ -232,7 +231,6 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryLinked(repoFullName, webhookID, 1, false), nil)
 	if err == nil {
-		h.MenuOwners.Cleanup()
 		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
 	return err
@@ -281,7 +279,6 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 
 	sent, err := m.ReplyRichMessageHTML(c, settings.DiscoveryPage(repos, resp, page), nil)
 	if err == nil {
-		h.MenuOwners.Cleanup()
 		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
 	return err
@@ -302,7 +299,6 @@ func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryPage(links, 1), nil)
 	if err == nil {
-		h.MenuOwners.Cleanup()
 		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
 	return err
@@ -390,7 +386,6 @@ func (h *CommandHandler) Repos(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	sent, err := m.ReplyRichMessageHTML(c, settings.LinkedRepositoryPage(links, 1), nil)
 	if err == nil && len(links) > 100 {
-		h.MenuOwners.Cleanup()
 		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
 	return err

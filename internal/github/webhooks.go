@@ -34,19 +34,17 @@ type WebhookServer struct {
 	DB              *db.DB
 	Bot             *gotdbot.Client
 	ClientFactory   *ClientFactory
-	ContextCache    *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
-	ActionCache     *cache.Cache[string, models.PRActionContext] // Key: UUID
+	ContextCache    *cache.Cache[string, models.MessageContext] // Key: "chat_id:message_id"
 	AdminCache      *cache.Cache[int64, []int64]
 }
 
-func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, factory *ClientFactory, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64]) *WebhookServer {
+func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, factory *ClientFactory, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64]) *WebhookServer {
 	return &WebhookServer{
 		Config:        cfg,
 		DB:            database,
 		Bot:           bot,
 		ClientFactory: factory,
 		ContextCache:  ctxCache,
-		ActionCache:   actionCache,
 		AdminCache:    adminCache,
 	}
 }

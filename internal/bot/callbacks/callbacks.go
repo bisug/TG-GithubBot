@@ -28,18 +28,16 @@ type CallbackHandler struct {
 	DB            *db.DB
 	ClientFactory *github.ClientFactory
 	EncryptionKey string
-	ActionCache   *cache.Cache[string, models.PRActionContext]
 	AdminCache    *cache.Cache[int64, []int64]
 	MenuOwners    *cache.Cache[[2]int64, int64]
 }
 
-func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64], menuOwners *cache.Cache[[2]int64, int64]) *CallbackHandler {
+func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, adminCache *cache.Cache[int64, []int64], menuOwners *cache.Cache[[2]int64, int64]) *CallbackHandler {
 	return &CallbackHandler{
 		Config:        cfg,
 		DB:            database,
 		ClientFactory: factory,
 		EncryptionKey: key,
-		ActionCache:   actionCache,
 		AdminCache:    adminCache,
 		MenuOwners:    menuOwners,
 	}
@@ -568,80 +566,6 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	_ = u.Answer(c, "", nil)
 	return h.editRichMessage(c, u, settings.RepositoryLinked(repo.GetFullName(), webhookID, page, false), &gotdbot.EditRichTextOpts{})
-}
-
-func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
-	data := u.DataString()
-	parts := strings.Split(data, ":") // act:approve:uuid
-
-	if len(parts) != 3 || parts[0] != "act" || (parts[1] != "approve" && parts[1] != "close") || parts[2] == "" {
-		return u.Answer(c, "Unsupported action. Open the pull request on GitHub.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-	}
-
-	action := parts[1]
-	actionID := parts[2]
-
-	prContext, ok := h.ActionCache.Get(actionID)
-	if !ok {
-		_ = u.Answer(c, "Action expired. Please open the PR link manually.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-
-	owner := prContext.Owner
-	repo := prContext.Repo
-	prNum := prContext.PRNumber
-
-	repoFullName := fmt.Sprintf("%s/%s", owner, repo)
-	_, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoFullName)
-	if err != nil {
-		_ = u.Answer(c, "Repository not linked to this chat. Use /addrepo to link it.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-
-	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
-		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
-			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
-		}
-		_ = u.Answer(c, utils.ConnectionError(err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-
-	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-	if err != nil {
-		_ = u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-
-	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
-	if err != nil {
-		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-	ctxBg := context.Background()
-
-	var msg string
-
-	switch action {
-	case "approve":
-		_, _, err = ghClient.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: new("APPROVE")})
-		msg = fmt.Sprintf("Approved %s/%s #%d.", owner, repo, prNum)
-	case "close":
-		_, _, err = ghClient.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: new("closed")})
-		msg = fmt.Sprintf("Closed %s/%s #%d.", owner, repo, prNum)
-	}
-
-	if err != nil {
-		if h.handleAuthError(c, u, err) {
-			return nil
-		}
-		c.Logger.Warnf("Could not update the pull request: %s", utils.ErrorDetails(err))
-		_ = u.Answer(c, utils.OperationError("Could not update the pull request", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		return nil
-	}
-
-	_ = u.Answer(c, msg, &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-	return nil
 }
 
 func (h *CallbackHandler) handleAuthError(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, err error) bool {
