@@ -46,7 +46,7 @@ func main() {
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
 		Logger:        appLogger,
-		LibraryPath:   "./libtdjson.so.1.8.69",
+		LibraryPath:   "./libtdjson.so.1.8.70",
 		AutoRetry:     &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true, MessageNotFound: true},
 		UpdateWorkers: 16,
 		ErrorHandler: func(c *gotdbot.Client, update gotdbot.TlObject, err error) error {
