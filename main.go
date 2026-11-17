@@ -215,6 +215,10 @@ func main() {
 	}
 
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/" {
+			http.NotFound(writer, request)
+			return
+		}
 		html := fmt.Sprintf(`
 		<html>
 		<head><title>GitHub Webhook Bot</title></head>
@@ -228,7 +232,7 @@ func main() {
 		_, _ = writer.Write([]byte(html))
 	})
 
-	webhookHandler := github.NewWebhookServer(cfg, database, bot, clientFactory, contextCache, actionCache, adminCache).Handler
+	webhookHandler := github.NewWebhookServer(cfg, database, bot, clientFactory, contextCache, adminCache).Handler
 	http.HandleFunc("/webhook/", webhookHandler)
 	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
@@ -301,8 +305,15 @@ func main() {
 		_, _ = w.Write([]byte(html))
 	})
 
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	bot.Logger.Infof("Server listening on port %s", cfg.Port)
-	if err = http.ListenAndServe(":"+cfg.Port, nil); err != nil {
+	if err = server.ListenAndServe(); err != nil {
 		appLogger.Errorf("Server failed. Check the server configuration: %s", utils.ErrorDetails(err))
 		os.Exit(1)
 	}
