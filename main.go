@@ -64,7 +64,6 @@ func main() {
 	}
 
 	bot.OnUpdateNewChat(middleware.TrackChat(database), nil)
-	//bot.OnUpdateUser(middleware.TrackUser(database), nil)
 
 	// Register commands once so private-chat fallbacks can identify unknown names.
 	registeredCommands := map[string]bool{}
