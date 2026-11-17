@@ -3146,22 +3146,29 @@ func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error
 }
 
 func (h *CommandHandler) findNotificationThreadID(ctx context.Context, client *github.Client, owner, repo string, issueNum int) (string, error) {
-	notifs, _, err := client.Activity.ListRepositoryNotifications(ctx, owner, repo, &github.NotificationListOptions{All: true})
-	if err != nil {
-		return "", err
-	}
-	for _, n := range notifs {
-		suffixIssue := fmt.Sprintf("/issues/%d", issueNum)
-		suffixPR := fmt.Sprintf("/pulls/%d", issueNum)
-		if strings.HasSuffix(n.GetSubject().GetURL(), suffixIssue) || strings.HasSuffix(n.GetSubject().GetURL(), suffixPR) {
-			return n.GetID(), nil
+	suffixIssue := fmt.Sprintf("/issues/%d", issueNum)
+	suffixPR := fmt.Sprintf("/pulls/%d", issueNum)
+	opts := &github.NotificationListOptions{All: true, ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		notifs, resp, err := client.Activity.ListRepositoryNotifications(ctx, owner, repo, opts)
+		if err != nil {
+			return "", err
 		}
+		for _, n := range notifs {
+			subjectURL := n.GetSubject().GetURL()
+			if strings.HasSuffix(subjectURL, suffixIssue) || strings.HasSuffix(subjectURL, suffixPR) {
+				return n.GetID(), nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return "", errors.New("notification not found")
+		}
+		opts.Page = resp.NextPage
 	}
-	return "", errors.New("notification not found")
 }
 
 func (h *CommandHandler) Mute(c *gotdbot.Client, m *gotdbot.Message) error {
-	threadID := getTopicID(m)
+	threadID := utils.TopicID(m)
 	err := h.DB.MuteThread(context.Background(), m.ChatId, threadID)
 	if err != nil {
 		c.Logger.Warnf("Could not mute notifications chat_id=%d topic_id=%d: %s", m.ChatId, threadID, utils.ErrorDetails(err))
