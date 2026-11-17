@@ -504,7 +504,14 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		return h.editRichMessage(c, u, settings.RepositoryLinked(repo.GetFullName(), existingLink.WebhookID, page, true), &gotdbot.EditRichTextOpts{})
 	}
 
-	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)
+	destination := fmt.Sprintf("%d", u.ChatId)
+	if source, getErr := c.GetMessage(u.ChatId, u.MessageId); getErr == nil {
+		if topic := utils.TopicID(source); topic != 0 {
+			destination = fmt.Sprintf("%d:%d", u.ChatId, topic)
+		}
+	}
+
+	chatToken, encErr := utils.Encrypt(destination, h.EncryptionKey)
 	if encErr != nil {
 		_ = u.Answer(c, "Could not prepare the webhook. Try again or contact the bot administrator.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
