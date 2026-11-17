@@ -10,7 +10,7 @@ import (
 
 // EncryptStd encrypts plain text using AES-GCM and Standard Base64 encoding
 func EncryptStd(plainText, keyString string) (string, error) {
-	key, err := getKeyBytes(keyString)
+	key, err := EncryptionKeyBytes(keyString)
 	if err != nil {
 		return "", err
 	}

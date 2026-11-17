@@ -12,7 +12,7 @@ import (
 
 // Encrypt encrypts plain text using AES-GCM
 func Encrypt(plainText, keyString string) (string, error) {
-	key, err := getKeyBytes(keyString)
+	key, err := EncryptionKeyBytes(keyString)
 	if err != nil {
 		return "", err
 	}
@@ -38,7 +38,7 @@ func Encrypt(plainText, keyString string) (string, error) {
 
 // Decrypt decrypts base64 encoded ciphertext using AES-GCM
 func Decrypt(encryptedText, keyString string) (string, error) {
-	key, err := getKeyBytes(keyString)
+	key, err := EncryptionKeyBytes(keyString)
 	if err != nil {
 		return "", err
 	}
@@ -75,7 +75,9 @@ func Decrypt(encryptedText, keyString string) (string, error) {
 	return string(plaintext), nil
 }
 
-func getKeyBytes(keyString string) ([]byte, error) {
+// EncryptionKeyBytes parses the configured key. Config uses this at startup so
+// a bad key fails the deploy instead of breaking /connect later.
+func EncryptionKeyBytes(keyString string) ([]byte, error) {
 	if len(keyString) == 64 {
 		return hex.DecodeString(keyString)
 	}

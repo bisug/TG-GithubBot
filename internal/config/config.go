@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 
+	"github-webhook/internal/utils"
+
 	"github.com/AshokShau/gotdbot/logger"
 	"github.com/joho/godotenv"
 )
@@ -42,6 +44,10 @@ func Load(botLogger *logger.Logger) *Config {
 
 	if len(missing) > 0 {
 		botLogger.Errorf("Missing required environment variables: %s", strings.Join(missing, ", "))
+		os.Exit(1)
+	}
+	if _, err := utils.EncryptionKeyBytes(os.Getenv("ENCRYPTION_KEY")); err != nil {
+		botLogger.Errorf("Invalid ENCRYPTION_KEY: %s", err)
 		os.Exit(1)
 	}
 
