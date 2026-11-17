@@ -36,7 +36,7 @@ A robust Telegram bot that integrates with GitHub to send real-time event notifi
 
 ## Prerequisites
 
-*   **Go**: v1.23 or higher
+*   **Go**: v1.27 or higher
 *   **Docker & Docker Compose**: For containerized deployment.
 *   **MongoDB**: v5.0+ (Provided via Docker Compose or MongoDB Atlas).
 *   **Telegram Bot Token**: Created via [@BotFather](https://t.me/BotFather).
@@ -75,10 +75,6 @@ ENCRYPTION_KEY=a1b2c3d4...
 
 # --- Server ---
 PORT=8080
-
-# --- Owner / Admin ---
-# Telegram User ID of the owner
-OWNER_ID=123456789
 ```
 
 ## Installation & Deployment
@@ -121,6 +117,10 @@ OWNER_ID=123456789
     ```
 
 ### Deploy to a PaaS
+
+Run exactly one instance. OAuth states, reply context, admin permissions and
+webhook deduplication live in process memory, so a second replica breaks `/connect`
+and can send a notification twice. The bundled PaaS configs all use one instance.
 
 The repo ships config for four platforms. All of them build the root `Dockerfile`
 (`docker go generate` then `go build -o bot .`), listen on `$PORT` (default
