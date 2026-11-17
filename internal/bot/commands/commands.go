@@ -774,17 +774,6 @@ func (h *CommandHandler) resolveIssueOrPRNumber(m *gotdbot.Message) (int, error)
 	return 0, errors.New("No issue or pull request selected. Reply to a recent notification or provide a positive issue or PR number.")
 }
 
-func (h *CommandHandler) resolveCommentID(m *gotdbot.Message) (int64, error) {
-	if m.ReplyToMessageID() != 0 {
-		key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
-		mContext, found := h.ContextCache.Get(key)
-		if found && mContext.CommentID != 0 {
-			return mContext.CommentID, nil
-		}
-	}
-	return 0, errors.New("No comment selected. Reply to a recent comment notification.")
-}
-
 func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
 	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
@@ -2945,99 +2934,14 @@ func (h *CommandHandler) Answered(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	commentID, err := h.resolveCommentID(m)
-	if err != nil {
-		_, _ = m.ReplyText(c, err.Error(), nil)
-		return nil
-	}
-
-	queryComment := `query($owner: String!, $name: String!) {
-		repository(owner: $owner, name: $name) {
-			discussions(first: 10) {
-				nodes {
-					comments(first: 100) {
-						nodes {
-							id
-							databaseId
-							replies(first: 100) {
-								nodes {
-									id
-									databaseId
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}`
-
-	body := map[string]any{
-		"query": queryComment,
-		"variables": map[string]any{
-			"owner": owner,
-			"name":  repo,
-			"dbId":  commentID,
-		},
-	}
-
-	req, err := client.NewRequest(context.Background(), "POST", "graphql", body)
-	if err != nil {
-		_, _ = m.ReplyText(c, "Could not load the discussion comment. Please try again.", nil)
-		return nil
-	}
-
-	var respData struct {
-		Data struct {
-			Repository struct {
-				Discussions struct {
-					Nodes []struct {
-						Comments struct {
-							Nodes []struct {
-								ID         string `json:"id"`
-								DatabaseID int64  `json:"databaseId"`
-								Replies    struct {
-									Nodes []struct {
-										ID         string `json:"id"`
-										DatabaseID int64  `json:"databaseId"`
-									} `json:"nodes"`
-								} `json:"replies"`
-							} `json:"nodes"`
-						} `json:"comments"`
-					} `json:"nodes"`
-				} `json:"discussions"`
-			} `json:"repository"`
-		} `json:"data"`
-	}
-
-	err = doGraphQL(context.Background(), client, req, &respData)
-	if err != nil {
-		c.Logger.Warnf("Failed to fetch comments: %s", utils.ErrorDetails(err))
-		_, _ = m.ReplyText(c, utils.OperationError("Failed to fetch comments", err), nil)
-		return nil
-	}
-
 	var commentNodeID string
-	for _, disc := range respData.Data.Repository.Discussions.Nodes {
-		for _, comment := range disc.Comments.Nodes {
-			if comment.DatabaseID == commentID {
-				commentNodeID = comment.ID
-				break
-			}
-			for _, reply := range comment.Replies.Nodes {
-				if reply.DatabaseID == commentID {
-					commentNodeID = reply.ID
-					break
-				}
-			}
-		}
-		if commentNodeID != "" {
-			break
+	if m.ReplyToMessageID() != 0 {
+		if ctx, ok := h.ContextCache.Get(fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())); ok {
+			commentNodeID = ctx.CommentNodeID
 		}
 	}
-
 	if commentNodeID == "" {
-		_, _ = m.ReplyText(c, "Comment not found among recent discussions. Open it on GitHub to mark it as an answer.", nil)
+		_, _ = m.ReplyText(c, "Reply to a recent discussion comment to mark it as the answer.", nil)
 		return nil
 	}
 
