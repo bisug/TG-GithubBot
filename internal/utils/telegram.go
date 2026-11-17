@@ -32,6 +32,16 @@ func IsIgnorableTelegramError(err error) bool {
 		strings.Contains(msg, "query_id_invalid")
 }
 
+// TopicID returns the forum topic a message belongs to, or 0 outside a topic.
+func TopicID(m *gotdbot.Message) int32 {
+	if m != nil {
+		if topic, ok := m.TopicId.(*gotdbot.MessageTopicForum); ok {
+			return topic.ForumTopicId
+		}
+	}
+	return 0
+}
+
 func IsAdmin(b *gotdbot.Client, chatID int64, userID int64, adminCache *cache.Cache[int64, []int64]) bool {
 	if admins, ok := adminCache.Get(chatID); ok {
 		return slices.Contains(admins, userID)

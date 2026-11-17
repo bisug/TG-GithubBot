@@ -26,15 +26,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-func getTopicID(m *gotdbot.Message) int32 {
-	if m.TopicId != nil {
-		if t, ok := m.TopicId.(*gotdbot.MessageTopicForum); ok {
-			return t.ForumTopicId
-		}
-	}
-	return 0
-}
-
 type CommandHandler struct {
 	Config          *config.Config
 	DB              *db.DB
@@ -174,8 +165,8 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	payload := fmt.Sprintf("%d", m.ChatId)
-	if getTopicID(m) != 0 {
-		payload = fmt.Sprintf("%d:%d", m.ChatId, getTopicID(m))
+	if utils.TopicID(m) != 0 {
+		payload = fmt.Sprintf("%d:%d", m.ChatId, utils.TopicID(m))
 	}
 
 	token, encErr := utils.Encrypt(payload, h.EncryptionKey)
@@ -3280,7 +3271,7 @@ func (h *CommandHandler) Mute(c *gotdbot.Client, m *gotdbot.Message) error {
 }
 
 func (h *CommandHandler) Unmute(c *gotdbot.Client, m *gotdbot.Message) error {
-	threadID := getTopicID(m)
+	threadID := utils.TopicID(m)
 	err := h.DB.UnmuteThread(context.Background(), m.ChatId, threadID)
 	if err != nil {
 		c.Logger.Warnf("Could not unmute notifications chat_id=%d topic_id=%d: %s", m.ChatId, threadID, utils.ErrorDetails(err))
